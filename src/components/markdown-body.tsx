@@ -2,6 +2,8 @@ import ReactMarkdown from "react-markdown";
 import rehypeHighlight from "rehype-highlight";
 import remarkBreaks from "remark-breaks";
 
+import { unwrapHardBreaks } from "@/lib/markdown-unwrap";
+
 import "highlight.js/styles/github-dark.css";
 
 
@@ -20,7 +22,7 @@ export function MarkdownBody({ children }: { children: string }) {
   return (
     <div className={PROSE_CLASSES}>
       <ReactMarkdown remarkPlugins={[remarkBreaks]} rehypePlugins={[rehypeHighlight]}>
-        {children}
+        {unwrapHardBreaks(children)}
       </ReactMarkdown>
     </div>
   );
