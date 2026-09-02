@@ -59,8 +59,9 @@ export interface BeadDetailProps {
 }
 
 /**
- * Bead detail panel — slides in from the right.
+ * Bead detail panel — a modal that fills the viewport.
  * Displays full bead information with metadata, PR section, subtasks, and comments.
+ * The id / title / close header stays pinned while the body scrolls.
  */
 export function BeadDetail({
   bead,
@@ -219,29 +220,39 @@ export function BeadDetail({
           onClick={() => onOpenChange(false)}
         />
       )}
-      {/* Slide-in panel */}
+      {/* Full-screen modal panel */}
       <div
         className={cn(
-          "fixed inset-y-0 right-0 z-50 w-full sm:max-w-lg md:max-w-xl overflow-y-auto bg-surface-base border-l border-b-default p-6 shadow-lg transition-transform duration-300 ease-in-out",
-          open ? "translate-x-0" : "translate-x-full"
+          "fixed inset-0 md:inset-[2.5vh_2.5vw] z-50 w-auto max-w-none overflow-y-auto bg-surface-base border border-b-default md:rounded-xl p-6 shadow-lg transition-opacity duration-200 ease-in-out",
+          open ? "opacity-100" : "opacity-0 invisible pointer-events-none"
         )}
       >
-          {/* Header with Back button */}
-          <div className="flex items-center justify-between mb-6">
-            <Button
-              variant="ghost"
-              size="sm"
-              onClick={() => onOpenChange(false)}
-              className="gap-1.5 -ml-2"
-            >
-              <ArrowLeft className="h-4 w-4" aria-hidden="true" />
-              Back
-            </Button>
-          </div>
+          {/* Pinned header: back, id, title, close. Copy-link belongs in
+              the control cluster, immediately before the Close button. */}
+          <div className="sticky top-0 z-10 -mx-6 -mt-6 mb-6 border-b border-b-default bg-surface-base px-6 pt-4 pb-3">
+            <div className="flex items-center justify-between gap-2">
+              <Button
+                variant="ghost"
+                size="sm"
+                onClick={() => onOpenChange(false)}
+                className="gap-1.5 -ml-2"
+              >
+                <ArrowLeft className="h-4 w-4" aria-hidden="true" />
+                Back
+              </Button>
+              <div className="flex items-center gap-1">
+                <button
+                  onClick={() => onOpenChange(false)}
+                  className="rounded-sm p-1 opacity-70 ring-offset-background transition-opacity hover:opacity-100 focus:outline-none focus:ring-2 focus:ring-ring focus:ring-offset-2"
+                >
+                  <X className="h-4 w-4" />
+                  <span className="sr-only">Close</span>
+                </button>
+              </div>
+            </div>
 
-          <div className="space-y-4">
             {/* Ticket Number + Bead ID */}
-            <p className="text-xs font-mono text-t-muted">
+            <p className="mt-2 text-xs font-mono text-t-muted">
               {ticketNumber !== undefined && (
                 <CopyableText copyText={`#${ticketNumber}`} className="font-semibold text-t-secondary">
                   #{ticketNumber}
@@ -254,14 +265,16 @@ export function BeadDetail({
             </p>
 
             {/* Title */}
-            <h2 className="text-xl font-semibold leading-tight text-t-primary">
+            <h2 className="mt-1 text-xl font-semibold leading-tight text-t-primary">
               <EditableField
                 value={bead.title}
                 onSave={handleSaveTitle}
                 disabled={isReadOnly}
               />
             </h2>
+          </div>
 
+          <div className="space-y-4">
             {/* Worktree path */}
             {bead.issue_type !== "epic" && hasWorktree && worktreeStatus?.worktree_path && (
               <div className={cn(
@@ -473,15 +486,6 @@ export function BeadDetail({
 
           {/* Children slot for comments + timeline */}
           {children && <div className="mt-6">{children}</div>}
-
-        {/* Close button */}
-        <button
-          onClick={() => onOpenChange(false)}
-          className="absolute right-4 top-4 rounded-sm opacity-70 ring-offset-background transition-opacity hover:opacity-100 focus:outline-none focus:ring-2 focus:ring-ring focus:ring-offset-2"
-        >
-          <X className="h-4 w-4" />
-          <span className="sr-only">Close</span>
-        </button>
       </div>
 
       {/* Add Subtask Dialog (for epics) */}
