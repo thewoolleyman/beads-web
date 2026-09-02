@@ -165,6 +165,13 @@ export default function KanbanBoard() {
   const lanes = useMemo(() => deriveLanes(visibleBeads, DEFAULT_LANES), [visibleBeads]);
 
   /**
+   * Lane set for the status filter's options. Derived from every bead, not
+   * just the visible ones, so selecting a status never removes its own
+   * option from the menu.
+   */
+  const filterLanes = useMemo(() => deriveLanes(beads, DEFAULT_LANES), [beads]);
+
+  /**
    * Group beads by their raw status, one bucket per lane.
    */
   const filteredBeadsByStatus = useMemo(() => {
@@ -296,6 +303,8 @@ export default function KanbanBoard() {
       {/* Quick Filter Bar */}
       <div className="flex justify-center px-4 pb-3">
         <QuickFilterBar
+          // Lanes drive the status filter's options
+          lanes={filterLanes}
           // Search
           search={filters.search}
           onSearchChange={(value) => setFilters({ search: value })}
