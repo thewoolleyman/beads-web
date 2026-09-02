@@ -106,6 +106,36 @@ export function deriveLanes(
 }
 
 /**
+ * Order a set of raw statuses the way the board orders its lanes:
+ * configured lanes first in the configured order, then every other
+ * status in first-seen order.
+ *
+ * Unlike {@link deriveLanes}, this returns *only* statuses that actually
+ * appear in the input. Use it wherever a surface enumerates the statuses
+ * present in some data (donut segments, per-status count rows) rather
+ * than rendering a fixed lane set.
+ */
+export function orderStatuses(
+  statuses: readonly string[],
+  configured: readonly string[] = DEFAULT_LANES,
+): string[] {
+  const present: string[] = [];
+  const seen = new Set<string>();
+  for (const raw of statuses) {
+    const status = (raw ?? '').trim();
+    if (!status || seen.has(status) || HIDDEN_STATUSES.has(status)) continue;
+    seen.add(status);
+    present.push(status);
+  }
+
+  const configuredSet = new Set(configured);
+  return [
+    ...configured.filter((status) => seen.has(status)),
+    ...present.filter((status) => !configuredSet.has(status)),
+  ];
+}
+
+/**
  * Resolve the colour accent for a lane, falling back to a neutral tone
  * for statuses the palette does not know about.
  */

@@ -1,6 +1,6 @@
 import { describe, it, expect } from 'vitest';
 
-import { DEFAULT_LANES, deriveLanes, laneAccent } from '@/lib/lanes';
+import { DEFAULT_LANES, deriveLanes, laneAccent, orderStatuses } from '@/lib/lanes';
 
 /** Minimal shape deriveLanes needs — full Bead objects are not required. */
 function withStatus(...statuses: string[]): { status: string }[] {
@@ -90,5 +90,41 @@ describe('laneAccent', () => {
 
   it('exposes the accent as a ready-to-use CSS colour', () => {
     expect(laneAccent('active').color).toBe(`hsl(var(${laneAccent('active').variable}))`);
+  });
+});
+
+describe('orderStatuses', () => {
+  it('returns only the statuses present, in configured lane order', () => {
+    expect(orderStatuses(['closed', 'ready', 'backlog'])).toEqual([
+      'backlog',
+      'ready',
+      'closed',
+    ]);
+  });
+
+  it('appends unconfigured statuses in first-seen order', () => {
+    expect(orderStatuses(['triage', 'ready', 'aardvark'])).toEqual([
+      'ready',
+      'triage',
+      'aardvark',
+    ]);
+  });
+
+  it('drops hidden and blank statuses', () => {
+    expect(orderStatuses(['tombstone', '', ' ', 'active'])).toEqual(['active']);
+  });
+
+  it('de-duplicates repeated statuses', () => {
+    expect(orderStatuses(['ready', 'ready', 'active'])).toEqual([
+      'ready',
+      'active',
+    ]);
+  });
+
+  it('honours a custom configured lane order', () => {
+    expect(orderStatuses(['ready', 'active'], ['active', 'ready'])).toEqual([
+      'active',
+      'ready',
+    ]);
   });
 });

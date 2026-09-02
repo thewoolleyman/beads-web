@@ -58,10 +58,10 @@ export function useProjects(): UseProjectsResult {
       //   1. The previous in-memory project (covers live refreshes).
       //   2. The server-provided `cachedCounts` from the SQLite cache
       //      (covers cold loads — instant donut paint).
-      //   3. `zeroCounts` as a last-resort empty state. In that case
-      //      `countsLoaded` stays false so the card can render a dashed
-      //      placeholder donut instead of misleading "0/0/0/0" values.
-      const zeroCounts: BeadCounts = { open: 0, in_progress: 0, inreview: 0, closed: 0 };
+      //   3. An empty counts map as a last-resort empty state. In that
+      //      case `countsLoaded` stays false so the card can render a
+      //      dashed placeholder donut instead of misleading zeros.
+      const emptyCounts: BeadCounts = {};
       setProjects((prev) => {
         const prevMap = new Map(prev.map((p) => [p.id, p]));
         return data.map((p) => {
@@ -73,13 +73,8 @@ export function useProjects(): UseProjectsResult {
           const beadCounts: BeadCounts = hasPrev
             ? prevProject!.beadCounts!
             : cached
-              ? {
-                  open: cached.open,
-                  in_progress: cached.in_progress,
-                  inreview: cached.inreview,
-                  closed: cached.closed,
-                }
-              : zeroCounts;
+              ? { ...(cached.statuses ?? {}) }
+              : emptyCounts;
 
           const dataSource = hasPrev
             ? prevProject!.dataSource
@@ -113,17 +108,16 @@ export function useProjects(): UseProjectsResult {
           const result = await loadProjectBeads(project.path, { withSource: true });
           if (beadsSignal.aborted) return null;
           const grouped = groupBeadsByStatus(result.beads);
-          const beadCounts: BeadCounts = {
-            open: grouped.open.length,
-            in_progress: grouped.in_progress.length,
-            inreview: grouped.inreview.length,
-            closed: grouped.closed.length,
-          };
+          // One entry per raw status present — never remapped onto bd's
+          // four native statuses.
+          const beadCounts: BeadCounts = Object.fromEntries(
+            Object.entries(grouped).map(([status, group]) => [status, group.length])
+          );
           return { id: project.id, beadCounts, dataSource: result.source, beadError: undefined };
         } catch (err) {
           if (err instanceof DOMException && err.name === 'AbortError') return null;
           const message = err instanceof Error ? err.message : 'Unknown error';
-          return { id: project.id, beadCounts: zeroCounts, dataSource: undefined, beadError: message };
+          return { id: project.id, beadCounts: emptyCounts, dataSource: undefined, beadError: message };
         }
       };
 

@@ -279,10 +279,10 @@ mod tests {
         let entry = ProjectWithTagsAndCounts {
             project: make_project_with_tags(),
             cached_counts: Some(CachedCounts {
-                open: 3,
-                in_progress: 1,
-                inreview: 0,
-                closed: 2,
+                statuses: std::collections::HashMap::from([
+                    ("ready".to_string(), 3i64),
+                    ("pending-approval".to_string(), 1i64),
+                ]),
                 data_source: Some("cli".to_string()),
                 updated_at: "2026-04-22T10:00:00Z".to_string(),
             }),
@@ -297,12 +297,14 @@ mod tests {
 
         // cachedCounts wrapper is camelCase
         assert!(json.contains("\"cachedCounts\":{"));
+        // Counts are a raw-status map, not bd's four native statuses
+        assert!(json.contains("\"ready\":3"));
+        assert!(json.contains("\"pending-approval\":1"));
+        assert!(json.contains("\"statuses\":{"));
         // CachedCounts inner fields are camelCase
-        assert!(json.contains("\"inProgress\":1"));
         assert!(json.contains("\"dataSource\":\"cli\""));
         assert!(json.contains("\"updatedAt\":\"2026-04-22T10:00:00Z\""));
         // No snake_case leaks
-        assert!(!json.contains("\"in_progress\""));
         assert!(!json.contains("\"data_source\""));
         assert!(!json.contains("\"cached_counts\""));
     }

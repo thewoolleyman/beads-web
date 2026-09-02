@@ -72,30 +72,30 @@ export async function parseBeadsFromPath(projectPath: string): Promise<Bead[]> {
 }
 
 /**
- * Groups beads by their status into a record
+ * Groups beads by their raw status into a record
+ *
+ * One bucket per status actually present — statuses are free-form
+ * per-tenant lifecycle strings and are never folded onto bd's four
+ * native statuses. Beads with a blank status are dropped, as they get no
+ * lane on the board either.
  *
  * @param beads - Array of Bead objects to group
- * @returns Record with status keys and arrays of beads as values
+ * @returns Record with raw status keys and arrays of beads as values
  *
  * @example
  * ```typescript
  * const grouped = groupBeadsByStatus(beads);
- * console.log(grouped.open.length); // Number of open beads
- * console.log(grouped.closed.length); // Number of closed beads
+ * console.log(grouped.ready?.length); // Number of ready beads
+ * console.log(grouped.closed?.length); // Number of closed beads
  * ```
  */
 export function groupBeadsByStatus(beads: Bead[]): Record<BeadStatus, Bead[]> {
-  const grouped: Record<BeadStatus, Bead[]> = {
-    open: [],
-    in_progress: [],
-    inreview: [],
-    closed: [],
-  };
+  const grouped: Record<BeadStatus, Bead[]> = {};
 
   for (const bead of beads) {
-    // Defensive: if status is somehow not one of the 4 columns, fall back to open
-    const column = grouped[bead.status] ? bead.status : 'open';
-    grouped[column].push(bead);
+    const status = (bead.status ?? '').trim();
+    if (!status) continue;
+    (grouped[status] ??= []).push(bead);
   }
 
   // Sort each group by updated_at descending (most recent first)
