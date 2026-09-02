@@ -355,6 +355,7 @@ export default function KanbanBoard() {
                 status={status}
                 title={title}
                 beads={filteredBeadsByStatus[status] || []}
+                projectId={projectId}
                 allBeads={beads}
                 selectedBeadId={selectedId}
                 ticketNumbers={ticketNumbers}
@@ -375,6 +376,7 @@ export default function KanbanBoard() {
       {detailBead && (
         <BeadDetail
           bead={detailBead}
+          projectId={projectId}
           ticketNumber={ticketNumbers.get(detailBead.id)}
           worktreeStatus={isDoltOnly ? undefined : worktreeStatuses[detailBead.id]}
           open={isDetailOpen}

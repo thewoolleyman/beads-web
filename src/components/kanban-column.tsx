@@ -14,6 +14,8 @@ export interface KanbanColumnProps {
   status: string;
   title: string;
   beads: Bead[];
+  /** Project the lane belongs to, used to build each card's deep link */
+  projectId: string;
   /** All beads for resolving epic children */
   allBeads: Bead[];
   selectedBeadId?: string | null;
@@ -42,6 +44,7 @@ export function KanbanColumn({
   status,
   title,
   beads,
+  projectId,
   allBeads,
   selectedBeadId,
   ticketNumbers,
@@ -93,6 +96,7 @@ export function KanbanColumn({
                   key={bead.id}
                   epic={bead}
                   allBeads={allBeads}
+                  projectId={projectId}
                   ticketNumber={ticketNumbers?.get(bead.id)}
                   isSelected={selectedBeadId === bead.id}
                   onSelect={onSelectBead}
@@ -109,6 +113,7 @@ export function KanbanColumn({
                 key={bead.id}
                 bead={bead}
                 allBeads={allBeads}
+                projectId={projectId}
                 ticketNumber={ticketNumbers?.get(bead.id)}
                 isSelected={selectedBeadId === bead.id}
                 onSelect={onSelectBead}

@@ -46,6 +46,8 @@ const PRIORITY_OPTIONS = [
 
 export interface BeadDetailProps {
   bead: Bead;
+  /** Project the bead belongs to, used to build its deep link */
+  projectId: string;
   ticketNumber?: number;
   worktreeStatus?: WorktreeStatus;
   open: boolean;
@@ -65,6 +67,7 @@ export interface BeadDetailProps {
  */
 export function BeadDetail({
   bead,
+  projectId,
   ticketNumber,
   worktreeStatus,
   open,
@@ -476,6 +479,7 @@ export function BeadDetail({
               <div className="rounded-lg border border-b-default bg-surface-raised/50 p-3">
                 <SubtaskList
                   childTasks={childTasks}
+                  projectId={projectId}
                   onChildClick={onChildClick}
                   isExpanded={true}
                   childPRStatuses={childPRStatuses}

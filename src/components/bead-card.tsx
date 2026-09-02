@@ -5,6 +5,7 @@ import { FolderOpen, GitPullRequest, Link2, MessageSquare, Check, X, Clock } fro
 import { CopyableText } from "@/components/copyable-text";
 import { Badge } from "@/components/ui/badge";
 import { useTheme } from "@/hooks/use-theme";
+import { beadHref, isModifiedClick } from "@/lib/bead-link";
 import { formatBeadId, formatWorktreePath, isBlocked, truncate } from "@/lib/bead-utils";
 import { getIssueTypeMeta } from "@/lib/issue-types";
 import { cn } from "@/lib/utils";
@@ -14,6 +15,8 @@ export interface BeadCardProps {
   bead: Bead;
   /** All beads on the board, used to resolve dep statuses for blocked detection */
   allBeads: Bead[];
+  /** Project the bead belongs to, used to build its deep link */
+  projectId: string;
   ticketNumber?: number;
   /** Worktree status for the bead */
   worktreeStatus?: WorktreeStatus;
@@ -148,7 +151,7 @@ function getStatusBadgeClasses(variant: StatusBadgeInfo['variant']): string {
   }
 }
 
-export function BeadCard({ bead, allBeads, ticketNumber, worktreeStatus, prStatus, isSelected = false, onSelect }: BeadCardProps) {
+export function BeadCard({ bead, allBeads, projectId, ticketNumber, worktreeStatus, prStatus, isSelected = false, onSelect }: BeadCardProps) {
   const { layout } = useTheme();
   const blocked = isBlocked(bead, allBeads);
   const commentCount = (bead.comments ?? []).length;
@@ -164,13 +167,18 @@ export function BeadCard({ bead, allBeads, ticketNumber, worktreeStatus, prStatu
   // Get PR checks display info
   const prChecksDisplay = prStatus ? getPRChecksDisplay(prStatus) : null;
 
-  // Shared interaction props
+  // Shared interaction props. The card is a real anchor so that Cmd/Ctrl-click,
+  // middle-click and "open in new tab" are handled by the browser; a plain
+  // click is ours and opens the detail in place without navigating.
   const interactionProps = {
     "data-bead-id": bead.id,
-    role: "button" as const,
-    tabIndex: 0,
+    href: beadHref(projectId, bead.id),
     "aria-label": `Select bead: ${bead.title}`,
-    onClick: () => onSelect(bead),
+    onClick: (e: React.MouseEvent<HTMLAnchorElement>) => {
+      if (isModifiedClick(e)) return;
+      e.preventDefault();
+      onSelect(bead);
+    },
     onKeyDown: (e: React.KeyboardEvent) => {
       if (e.key === 'Enter' || e.key === ' ') {
         e.preventDefault();
@@ -221,10 +229,10 @@ export function BeadCard({ bead, allBeads, ticketNumber, worktreeStatus, prStatu
   // ─── Layout: compact-row (Linear Minimal) ───
   if (layout === 'compact-row') {
     return (
-      <div
+      <a
         {...interactionProps}
         className={cn(
-          "theme-card cursor-pointer p-2 flex items-start gap-2.5",
+          "theme-card cursor-pointer p-2 flex items-start gap-2.5 no-underline text-inherit",
           "bg-card border border-transparent",
           "hover:bg-surface-overlay/50",
           "focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring",
@@ -274,17 +282,17 @@ export function BeadCard({ bead, allBeads, ticketNumber, worktreeStatus, prStatu
             </span>
           )}
         </div>
-      </div>
+      </a>
     );
   }
 
   // ─── Layout: property-tags (Notion Warm / GitHub Clean) ───
   if (layout === 'property-tags') {
     return (
-      <div
+      <a
         {...interactionProps}
         className={cn(
-          "theme-card cursor-pointer p-3 bg-card border border-b-default/60",
+          "theme-card cursor-pointer block p-3 bg-card border border-b-default/60 no-underline text-inherit",
           "hover:bg-surface-inset/30",
           "focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring",
           blocked && "border-l-3 border-l-danger",
@@ -338,16 +346,16 @@ export function BeadCard({ bead, allBeads, ticketNumber, worktreeStatus, prStatu
             </span>
           )}
         </div>
-      </div>
+      </a>
     );
   }
 
   // ─── Layout: standard (Default / Glassmorphism / Neo-Brutalist / Soft Light) ───
   return (
-    <div
+    <a
       {...interactionProps}
       className={cn(
-        "theme-card cursor-pointer bg-card border border-border/40 flex",
+        "theme-card cursor-pointer bg-card border border-border/40 flex no-underline text-inherit",
         "focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 focus-visible:ring-offset-background",
         blocked ? "border-l-4 border-l-danger" : "",
         isSelected && "ring-2 ring-ring ring-offset-2 ring-offset-background"
@@ -435,6 +443,6 @@ export function BeadCard({ bead, allBeads, ticketNumber, worktreeStatus, prStatu
           </div>
         )}
       </div>
-    </div>
+    </a>
   );
 }
