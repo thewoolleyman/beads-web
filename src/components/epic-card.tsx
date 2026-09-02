@@ -12,6 +12,7 @@ import { Button } from "@/components/ui/button";
 import { Progress } from "@/components/ui/progress";
 import { useTheme } from "@/hooks/use-theme";
 import * as api from "@/lib/api";
+import { beadHref, isModifiedClick } from "@/lib/bead-link";
 import { formatBeadId, isBlocked, truncate } from "@/lib/bead-utils";
 import { closeBead } from "@/lib/cli";
 import { computeEpicProgress } from "@/lib/epic-parser";
@@ -23,6 +24,8 @@ export interface EpicCardProps {
   epic: Epic;
   /** All beads to resolve children */
   allBeads: Bead[];
+  /** Project the epic belongs to, used to build deep links */
+  projectId: string;
   /** Ticket number for display */
   ticketNumber?: number;
   /** Whether this epic is selected */
@@ -68,6 +71,7 @@ const PR_STATUS_REFRESH_INTERVAL = 30_000;
 export function EpicCard({
   epic,
   allBeads,
+  projectId,
   ticketNumber,
   isSelected = false,
   onSelect,
@@ -179,13 +183,17 @@ export function EpicCard({
 
   const { layout } = useTheme();
 
-  // Shared interaction props
-  const interactionProps = {
-    "data-bead-id": epic.id,
-    role: "button" as const,
-    tabIndex: 0,
+  // The epic's own deep link. It wraps only the epic's identity block: the
+  // rest of the card holds child-row anchors and buttons, which must not be
+  // nested inside an anchor.
+  const linkProps = {
+    href: beadHref(projectId, epic.id),
     "aria-label": `Select epic: ${epic.title}`,
-    onClick: () => onSelect(epic),
+    onClick: (e: React.MouseEvent<HTMLAnchorElement>) => {
+      if (isModifiedClick(e)) return;
+      e.preventDefault();
+      onSelect(epic);
+    },
     onKeyDown: (e: React.KeyboardEvent) => {
       if (e.key === 'Enter' || e.key === ' ') {
         e.preventDefault();
@@ -193,6 +201,9 @@ export function EpicCard({
       }
     },
   };
+
+  /** Classes shared by every layout's epic anchor. */
+  const linkClass = "block cursor-pointer no-underline text-inherit rounded focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-epic";
 
   // Shared progress bar section
   const progressSection = (
@@ -228,6 +239,7 @@ export function EpicCard({
       </button>
       <SubtaskList
         childTasks={children}
+        projectId={projectId}
         onChildClick={onChildClick}
         maxCollapsed={3}
         isExpanded={isExpanded}
@@ -256,23 +268,24 @@ export function EpicCard({
   if (layout === 'compact-row') {
     return (
       <div
-        {...interactionProps}
+        data-bead-id={epic.id}
         className={cn(
-          "theme-card cursor-pointer p-2.5 bg-card border border-epic/20",
+          "theme-card p-2.5 bg-card border border-epic/20",
           "hover:bg-surface-overlay/50",
-          "focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-epic",
           isSelected && "bg-epic/5 outline outline-1 outline-epic/20"
         )}
       >
         <div className="flex items-start gap-2.5">
           <Layers className="h-4 w-4 text-epic shrink-0 mt-0.5" aria-hidden="true" />
           <div className="flex-1 min-w-0 space-y-2">
-            <div className="flex items-center gap-2">
-              <span className="text-xs text-t-muted font-mono shrink-0">{formatBeadId(epic.id)}</span>
-              <span className="text-[13px] font-semibold text-t-primary truncate">{epic.title}</span>
-              <span className="text-[10px] font-semibold text-epic shrink-0">EPIC</span>
-            </div>
-            {progressSection}
+            <a {...linkProps} className={cn(linkClass, "space-y-2")}>
+              <div className="flex items-center gap-2">
+                <span className="text-xs text-t-muted font-mono shrink-0">{formatBeadId(epic.id)}</span>
+                <span className="text-[13px] font-semibold text-t-primary truncate">{epic.title}</span>
+                <span className="text-[10px] font-semibold text-epic shrink-0">EPIC</span>
+              </div>
+              {progressSection}
+            </a>
             {closeButton}
             {childrenSection}
           </div>
@@ -285,15 +298,15 @@ export function EpicCard({
   if (layout === 'property-tags') {
     return (
       <div
-        {...interactionProps}
+        data-bead-id={epic.id}
         className={cn(
-          "theme-card cursor-pointer p-3 bg-card border border-epic/30",
+          "theme-card p-3 bg-card border border-epic/30",
           "hover:bg-surface-inset/30",
-          "focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-epic",
           isSelected && "ring-2 ring-epic ring-offset-2 ring-offset-surface-base"
         )}
       >
         <div className="space-y-2">
+          <a {...linkProps} className={cn(linkClass, "space-y-2")}>
           {/* Title */}
           <h3 className="font-semibold text-sm leading-tight text-t-primary">
             {truncate(epic.title, 70)}
@@ -320,6 +333,7 @@ export function EpicCard({
           </div>
 
           {progressSection}
+          </a>
           {closeButton}
           {childrenSection}
         </div>
@@ -330,12 +344,11 @@ export function EpicCard({
   // ─── Layout: standard (Default / Glassmorphism / Neo-Brutalist / Soft Light) ───
   return (
     <div
-      {...interactionProps}
+      data-bead-id={epic.id}
       className={cn(
-        "theme-card cursor-pointer p-4",
+        "theme-card p-4",
         "bg-surface-raised/70",
         "border border-b-default/60 border-l-2 border-l-epic",
-        "focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-epic focus-visible:ring-offset-2 focus-visible:ring-offset-surface-base",
         isSelected && "ring-2 ring-epic ring-offset-2 ring-offset-surface-base"
       )}
     >
@@ -365,6 +378,7 @@ export function EpicCard({
           </div>
         </div>
 
+        <a {...linkProps} className={cn(linkClass, "space-y-3")}>
         <h3 className="font-bold text-base leading-tight text-t-primary">{truncate(epic.title, 60)}</h3>
 
         {epic.description && (
@@ -395,6 +409,7 @@ export function EpicCard({
             )}
           </div>
         </div>
+        </a>
 
         {closeButton}
         {childrenSection}

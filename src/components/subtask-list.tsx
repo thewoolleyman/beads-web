@@ -3,6 +3,7 @@
 import { Check, Circle, Clock, FileCheck, GitPullRequest, GitMerge, Link2 } from "lucide-react";
 
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "@/components/ui/tooltip";
+import { beadHref, isModifiedClick } from "@/lib/bead-link";
 import { truncate } from "@/lib/bead-utils";
 import { cn } from "@/lib/utils";
 import type { Bead, BeadStatus } from "@/types";
@@ -18,6 +19,8 @@ export interface ChildPRStatus {
 export interface SubtaskListProps {
   /** Child tasks to display */
   childTasks: Bead[];
+  /** Project the tasks belong to, used to build each row's deep link */
+  projectId: string;
   /** Callback when clicking a child task */
   onChildClick: (child: Bead) => void;
   /** Maximum number of children to show when collapsed */
@@ -151,6 +154,7 @@ function PRStatusIcon({ prStatus }: { prStatus: ChildPRStatus | undefined }) {
  */
 export function SubtaskList({
   childTasks,
+  projectId,
   onChildClick,
   maxCollapsed = 3,
   isExpanded = false,
@@ -170,16 +174,19 @@ export function SubtaskList({
   return (
     <div className="space-y-1">
       {displayChildren.map((child) => (
-        <button
+        <a
           key={child.id}
+          href={beadHref(projectId, child.id)}
           onClick={(e) => {
             e.stopPropagation();
+            if (isModifiedClick(e)) return;
+            e.preventDefault();
             onChildClick(child);
           }}
           aria-label={`Open task: ${child.title}`}
           className={cn(
             "w-full flex items-start gap-2 px-2 py-1.5 rounded-md",
-            "hover:bg-surface-overlay transition-colors text-left",
+            "hover:bg-surface-overlay transition-colors text-left no-underline text-inherit",
             "focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-t-tertiary",
             "group"
           )}
@@ -214,7 +221,7 @@ export function SubtaskList({
           )}>
             {child.status.replace('_', ' ')}
           </div>
-        </button>
+        </a>
       ))}
       {hasMore && (
         <p className="text-[10px] text-muted-foreground text-center py-1">

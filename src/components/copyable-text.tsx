@@ -22,6 +22,8 @@ export function CopyableText({ children, copyText, className }: CopyableTextProp
   const [copied, setCopied] = useState(false);
 
   const handleCopy = useCallback(async (e: React.MouseEvent) => {
+    // Cards are anchors now, so a copy click inside one must not navigate.
+    e.preventDefault();
     e.stopPropagation();
     try {
       await navigator.clipboard.writeText(copyText);

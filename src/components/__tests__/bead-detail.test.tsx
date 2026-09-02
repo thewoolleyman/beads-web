@@ -17,6 +17,8 @@ const bead: Bead = {
   comments: [],
 };
 
+const PROJECT_ID = 'dolt://proj 1';
+
 const onOpenChange = vi.fn();
 
 /**
@@ -25,7 +27,7 @@ const onOpenChange = vi.fn();
  */
 function renderDetail() {
   const { container } = render(
-    <BeadDetail bead={bead} open onOpenChange={onOpenChange} />
+    <BeadDetail bead={bead} projectId={PROJECT_ID} open onOpenChange={onOpenChange} />
   );
   const panel = container.querySelector('div.fixed.overflow-y-auto');
   expect(panel).not.toBeNull();
@@ -83,7 +85,7 @@ describe('BeadDetail full-screen modal', () => {
   });
 
   it('ignores Escape when the panel is closed', () => {
-    render(<BeadDetail bead={bead} open={false} onOpenChange={onOpenChange} />);
+    render(<BeadDetail bead={bead} projectId={PROJECT_ID} open={false} onOpenChange={onOpenChange} />);
 
     fireEvent.keyDown(window, { key: 'Escape' });
 
