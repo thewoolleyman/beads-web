@@ -31,13 +31,14 @@ import { useBeadFilters } from "@/hooks/use-bead-filters";
 import { useBeads } from "@/hooks/use-beads";
 import { useGitHubStatus } from "@/hooks/use-github-status";
 import { useKeyboardNavigation } from "@/hooks/use-keyboard-navigation";
+import { useLanes } from "@/hooks/use-lanes";
 import { useProject } from "@/hooks/use-project";
 import { useTheme } from "@/hooks/use-theme";
 import { useWorktreeStatuses } from "@/hooks/use-worktree-statuses";
 import { isBlocked } from "@/lib/bead-utils";
 import { getIssueTypeMeta } from "@/lib/issue-types";
 import type { IssueTypeFilter } from "@/lib/issue-types";
-import { DEFAULT_LANES, deriveLanes } from "@/lib/lanes";
+import { deriveLanes } from "@/lib/lanes";
 import { isDoltProject } from "@/lib/utils";
 import type { Bead, BeadStatus } from "@/types";
 
@@ -158,18 +159,21 @@ export default function KanbanBoard() {
     return filteredBeads.filter(b => getIssueTypeMeta(b.issue_type).value === typeFilter);
   }, [filteredBeads, typeFilter]);
 
+  // Lane order the server configured (BEADS_WEB_LANES), or the default
+  const configuredLanes = useLanes();
+
   /**
    * Lanes for the board: the configured order first, then any other raw
    * status present in the data.
    */
-  const lanes = useMemo(() => deriveLanes(visibleBeads, DEFAULT_LANES), [visibleBeads]);
+  const lanes = useMemo(() => deriveLanes(visibleBeads, configuredLanes), [visibleBeads, configuredLanes]);
 
   /**
    * Lane set for the status filter's options. Derived from every bead, not
    * just the visible ones, so selecting a status never removes its own
    * option from the menu.
    */
-  const filterLanes = useMemo(() => deriveLanes(beads, DEFAULT_LANES), [beads]);
+  const filterLanes = useMemo(() => deriveLanes(beads, configuredLanes), [beads, configuredLanes]);
 
   /**
    * Group beads by their raw status, one bucket per lane.

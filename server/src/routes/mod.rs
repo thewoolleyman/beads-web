@@ -9,6 +9,7 @@ pub mod cli;
 pub mod dolt;
 pub mod fs;
 pub mod git;
+pub mod lanes;
 pub mod memory;
 pub mod projects;
 pub mod version;

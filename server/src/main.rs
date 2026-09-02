@@ -159,9 +159,14 @@ async fn main() {
     // Initialize version check cache
     let version_cache = routes::version::new_cache();
 
+    // Resolve the board's lane order once, from the environment
+    let lanes: routes::lanes::Lanes = Arc::new(routes::lanes::configured_lanes());
+    info!("Board lanes: {}", lanes.join(", "));
+
     // Build the router
     let app = Router::new()
         .route("/api/health", get(routes::health))
+        .route("/api/lanes", get(routes::lanes::get_lanes))
         .nest("/api", routes::project_routes().with_state(database.clone()))
         .route("/api/beads", get(routes::beads::read_beads))
         .route("/api/beads/create", post(routes::beads::create_bead_handler))
@@ -202,6 +207,7 @@ async fn main() {
         .route("/api/update", post(routes::version::perform_update))
         .fallback(serve_static)
         .layer(Extension(version_cache))
+        .layer(Extension(lanes))
         .layer(Extension(database))
         .layer(Extension(dolt_manager))
         .layer(cors);
