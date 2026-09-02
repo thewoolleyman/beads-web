@@ -198,10 +198,14 @@ export default function KanbanBoard() {
   // Ref for search input (keyboard navigation)
   const searchInputRef = useRef<HTMLInputElement>(null);
 
+  /** Lane statuses in board order — the column order keyboard nav walks. */
+  const laneStatuses = useMemo(() => lanes.map((lane) => lane.status), [lanes]);
+
   // Keyboard navigation over every card on the board
   const { selectedId } = useKeyboardNavigation({
     beads: visibleBeads,
     beadsByStatus: filteredBeadsByStatus,
+    laneStatuses,
     selectedId: null,
     onSelect: () => {
       // Just highlight, don't open detail
