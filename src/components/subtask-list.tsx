@@ -4,7 +4,6 @@ import { Check, Circle, Clock, FileCheck, GitPullRequest, GitMerge, Link2 } from
 
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "@/components/ui/tooltip";
 import { beadHref, isModifiedClick } from "@/lib/bead-link";
-import { truncate } from "@/lib/bead-utils";
 import { cn } from "@/lib/utils";
 import type { Bead, BeadStatus } from "@/types";
 
@@ -197,15 +196,15 @@ export function SubtaskList({
           </div>
           <div className="flex-1 min-w-0">
             <p className={cn(
-              "text-xs font-medium group-hover:underline",
+              "text-xs font-medium truncate group-hover:underline",
               child.status === 'closed' && "line-through text-t-muted",
               child.status !== 'closed' && "text-t-secondary"
             )}>
-              {truncate(child.title, 50)}
+              {child.title}
             </p>
             {child.description && (
-              <p className="text-[10px] text-t-muted mt-0.5">
-                {truncate(child.description, 60)}
+              <p className="text-[10px] text-t-muted mt-0.5 truncate">
+                {child.description}
               </p>
             )}
           </div>
