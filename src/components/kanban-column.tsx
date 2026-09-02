@@ -5,24 +5,13 @@ import { PackageOpen } from "lucide-react";
 import { BeadCard } from "@/components/bead-card";
 import { EpicCard } from "@/components/epic-card";
 import { Badge } from "@/components/ui/badge";
+import { laneAccent } from "@/lib/lanes";
 import { cn } from "@/lib/utils";
-import type { Bead, BeadStatus, Epic } from "@/types";
-
-/**
- * Get the CSS color value for a column's accent (used as --column-accent)
- */
-function getColumnAccentColor(status: BeadStatus): string {
-  switch (status) {
-    case "open": return "hsl(var(--status-open))";
-    case "in_progress": return "hsl(var(--status-progress))";
-    case "inreview": return "hsl(var(--status-review))";
-    case "closed": return "hsl(var(--status-closed))";
-    default: return "hsl(var(--text-muted))";
-  }
-}
+import type { Bead, Epic } from "@/types";
 
 export interface KanbanColumnProps {
-  status: BeadStatus;
+  /** Raw status this lane holds. */
+  status: string;
   title: string;
   beads: Bead[];
   /** All beads for resolving epic children */
@@ -36,60 +25,6 @@ export interface KanbanColumnProps {
   projectPath?: string;
   /** Callback after data changes (to refresh board) */
   onUpdate?: () => void;
-}
-
-/**
- * Get accent border class for column header based on status
- */
-function getColumnAccentBorder(status: BeadStatus): string {
-  switch (status) {
-    case "open":
-      return "border-t-2 border-t-status-open/60";
-    case "in_progress":
-      return "border-t-2 border-t-status-progress/60";
-    case "inreview":
-      return "border-t-2 border-t-status-review/60";
-    case "closed":
-      return "border-t-2 border-t-status-closed/60";
-    default:
-      return "border-t-2 border-t-t-muted/60";
-  }
-}
-
-/**
- * Get header text color based on status
- */
-function getHeaderTextColor(status: BeadStatus): string {
-  switch (status) {
-    case "open":
-      return "text-status-open";
-    case "in_progress":
-      return "text-status-progress";
-    case "inreview":
-      return "text-status-review";
-    case "closed":
-      return "text-status-closed";
-    default:
-      return "text-t-tertiary";
-  }
-}
-
-/**
- * Get badge color class for count badge based on status (dark theme)
- */
-function getBadgeVariant(status: BeadStatus): string {
-  switch (status) {
-    case "open":
-      return "bg-status-open/20 text-status-open border-status-open/30 hover:bg-status-open/20";
-    case "in_progress":
-      return "bg-status-progress/20 text-status-progress border-status-progress/30 hover:bg-status-progress/20";
-    case "inreview":
-      return "bg-status-review/20 text-status-review border-status-review/30 hover:bg-status-review/20";
-    case "closed":
-      return "bg-status-closed/20 text-status-closed border-status-closed/30 hover:bg-status-closed/20";
-    default:
-      return "bg-t-muted/20 text-t-tertiary border-t-muted/30 hover:bg-t-muted/20";
-  }
 }
 
 /**
@@ -116,23 +51,32 @@ export function KanbanColumn({
   projectPath,
   onUpdate,
 }: KanbanColumnProps) {
+  // Accent is resolved from the raw status, so any lifecycle gets a colour.
+  const accent = laneAccent(status);
+  const accentAlpha = (alpha: number) => `hsl(var(${accent.variable}) / ${alpha})`;
+
   return (
     <div
       className={cn(
         "flex flex-col h-full min-h-0 theme-column",
         "bg-surface-raised/30 border border-b-default/50"
       )}
-      style={{ '--column-accent': getColumnAccentColor(status) } as React.CSSProperties}
+      style={{ '--column-accent': accent.color } as React.CSSProperties}
     >
       {/* Column Header - fixed height with colored accent border */}
-      <div className={cn(
-        "flex-shrink-0 flex items-center justify-between px-4 py-3 border-b border-b-default/50 brutalist-column-header",
-        getColumnAccentBorder(status)
-      )}>
-        <h2 className={cn("font-semibold text-sm column-title-text", getHeaderTextColor(status))}>{title}</h2>
+      <div
+        className="flex-shrink-0 flex items-center justify-between px-4 py-3 border-b border-b-default/50 brutalist-column-header border-t-2"
+        style={{ borderTopColor: accentAlpha(0.6) }}
+      >
+        <h2 className="font-semibold text-sm column-title-text" style={{ color: accent.color }}>{title}</h2>
         <Badge
           variant="secondary"
-          className={cn("text-xs px-2 py-0.5 column-count-badge", getBadgeVariant(status))}
+          className="text-xs px-2 py-0.5 column-count-badge"
+          style={{
+            backgroundColor: accentAlpha(0.2),
+            borderColor: accentAlpha(0.3),
+            color: accent.color,
+          }}
         >
           {beads.length}
         </Badge>

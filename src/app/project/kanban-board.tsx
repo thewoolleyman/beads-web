@@ -37,22 +37,16 @@ import { useWorktreeStatuses } from "@/hooks/use-worktree-statuses";
 import { isBlocked } from "@/lib/bead-utils";
 import { getIssueTypeMeta } from "@/lib/issue-types";
 import type { IssueTypeFilter } from "@/lib/issue-types";
+import { DEFAULT_LANES, deriveLanes } from "@/lib/lanes";
 import { isDoltProject } from "@/lib/utils";
 import type { Bead, BeadStatus } from "@/types";
 
-/**
- * Column configuration for the Kanban board
- * Note: Cancelled status is hidden per requirements
- */
-const COLUMNS: { status: BeadStatus; title: string }[] = [
-  { status: "open", title: "Open" },
-  { status: "in_progress", title: "In Progress" },
-  { status: "inreview", title: "In Review" },
-  { status: "closed", title: "Closed" },
-];
+/** Minimum readable lane width before the board scrolls horizontally. */
+const LANE_MIN_WIDTH = "280px";
 
 /**
- * Main Kanban board component with 4 columns, search, filter, and keyboard navigation
+ * Main Kanban board component: one lane per status in the project's own
+ * status set, plus search, filter, and keyboard navigation.
  */
 export default function KanbanBoard() {
   const searchParams = useSearchParams();
@@ -154,36 +148,36 @@ export default function KanbanBoard() {
   );
 
   /**
-   * Filter to only top-level beads (no parent_id)
-   * Then apply the issue type filter ("all" or a specific type).
+   * Apply the issue type filter ("all" or a specific type).
    * Unknown/missing issue types resolve to "task" via getIssueTypeMeta.
-   * Child tasks should not appear in columns - they appear inside epic cards
+   * Child tasks are NOT filtered out — every bead gets its own card in the
+   * lane of its status, whether or not it also appears inside an epic.
    */
-  const topLevelBeads = useMemo(() => {
-    const topLevel = filteredBeads.filter(b => !b.parent_id);
-
-    // Apply issue type filter
-    if (typeFilter === "all") return topLevel;
-    return topLevel.filter(b => getIssueTypeMeta(b.issue_type).value === typeFilter);
+  const visibleBeads = useMemo(() => {
+    if (typeFilter === "all") return filteredBeads;
+    return filteredBeads.filter(b => getIssueTypeMeta(b.issue_type).value === typeFilter);
   }, [filteredBeads, typeFilter]);
 
   /**
-   * Group top-level beads by status for columns.
-   * Defensive: falls back to 'open' for any status not in the 4 columns.
+   * Lanes for the board: the configured order first, then any other raw
+   * status present in the data.
+   */
+  const lanes = useMemo(() => deriveLanes(visibleBeads, DEFAULT_LANES), [visibleBeads]);
+
+  /**
+   * Group beads by their raw status, one bucket per lane.
    */
   const filteredBeadsByStatus = useMemo(() => {
-    const grouped: Record<BeadStatus, Bead[]> = {
-      open: [],
-      in_progress: [],
-      inreview: [],
-      closed: [],
-    };
-    for (const bead of topLevelBeads) {
-      const column = grouped[bead.status] ? bead.status : 'open';
-      grouped[column].push(bead);
+    const grouped: Record<BeadStatus, Bead[]> = {};
+    for (const lane of lanes) {
+      grouped[lane.status] = [];
+    }
+    for (const bead of visibleBeads) {
+      const bucket = grouped[bead.status];
+      if (bucket) bucket.push(bead);
     }
     return grouped;
-  }, [topLevelBeads]);
+  }, [lanes, visibleBeads]);
 
   // Detail panel state
   const {
@@ -197,9 +191,9 @@ export default function KanbanBoard() {
   // Ref for search input (keyboard navigation)
   const searchInputRef = useRef<HTMLInputElement>(null);
 
-  // Keyboard navigation (use top-level beads for navigation)
+  // Keyboard navigation over every card on the board
   const { selectedId } = useKeyboardNavigation({
-    beads: topLevelBeads,
+    beads: visibleBeads,
     beadsByStatus: filteredBeadsByStatus,
     selectedId: null,
     onSelect: () => {
@@ -347,8 +341,15 @@ export default function KanbanBoard() {
             <div role="alert" className="text-danger">Error loading beads: {beadsError.message}</div>
           </div>
         ) : (
-          <div className="grid grid-cols-4 h-full" style={{ gap: 'var(--column-gap)' }}>
-            {COLUMNS.map(({ status, title }) => (
+          <div className="h-full overflow-x-auto">
+            <div
+              className="grid h-full"
+              style={{
+                gap: 'var(--column-gap)',
+                gridTemplateColumns: `repeat(${lanes.length}, minmax(${LANE_MIN_WIDTH}, 1fr))`,
+              }}
+            >
+            {lanes.map(({ status, title }) => (
               <KanbanColumn
                 key={status}
                 status={status}
@@ -364,6 +365,7 @@ export default function KanbanBoard() {
                 onUpdate={refreshBeads}
               />
             ))}
+            </div>
           </div>
         )}
       </main>
