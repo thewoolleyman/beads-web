@@ -293,6 +293,24 @@ fn extract_json_array(output: &str) -> Result<&str, String> {
     }
 }
 
+/// Tallies beads by their raw status.
+///
+/// Statuses are free-form per-tenant lifecycle strings and are never
+/// folded onto bd's four native statuses. Tombstones and blank statuses
+/// are skipped, matching what the board actually renders, so the
+/// dashboard totals agree with the lanes.
+fn count_statuses(beads: &[Bead]) -> HashMap<String, i64> {
+    let mut counts: HashMap<String, i64> = HashMap::new();
+    for bead in beads {
+        let status = bead.status.trim();
+        if status.is_empty() || status == "tombstone" {
+            continue;
+        }
+        *counts.entry(status.to_string()).or_insert(0) += 1;
+    }
+    counts
+}
+
 /// Computes bead counts from a slice of beads and upserts them into the
 /// local SQLite cache so the home page can render donut charts instantly.
 ///
@@ -321,25 +339,8 @@ fn upsert_counts_cache(
         }
     };
 
-    let mut open = 0i64;
-    let mut in_progress = 0i64;
-    let mut inreview = 0i64;
-    let mut closed = 0i64;
-    for bead in beads {
-        match bead.status.as_str() {
-            "open" => open += 1,
-            "in_progress" => in_progress += 1,
-            "inreview" => inreview += 1,
-            "closed" => closed += 1,
-            _ => {}
-        }
-    }
-
     let counts = CachedCounts {
-        open,
-        in_progress,
-        inreview,
-        closed,
+        statuses: count_statuses(beads),
         data_source: Some(data_source.to_string()),
         updated_at: Utc::now().to_rfc3339(),
     };
@@ -1216,6 +1217,53 @@ pub fn recompute_epic_statuses(issues_path: &Path) -> Result<Vec<String>, String
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// Build a minimal bead with the given raw status.
+    fn bead_with_status(id: &str, status: &str) -> Bead {
+        serde_json::from_str(&format!(
+            r#"{{"id":"{id}","title":"t","status":"{status}"}}"#
+        ))
+        .unwrap()
+    }
+
+    #[test]
+    fn test_count_statuses_keys_by_raw_status() {
+        let beads = vec![
+            bead_with_status("a-1", "ready"),
+            bead_with_status("a-2", "ready"),
+            bead_with_status("a-3", "pending-approval"),
+            bead_with_status("a-4", "closed"),
+        ];
+
+        let counts = count_statuses(&beads);
+
+        assert_eq!(counts.get("ready"), Some(&2));
+        assert_eq!(counts.get("pending-approval"), Some(&1));
+        assert_eq!(counts.get("closed"), Some(&1));
+        assert_eq!(counts.len(), 3);
+        // Lifecycle statuses are never folded onto bd's native ones.
+        assert_eq!(counts.get("open"), None);
+    }
+
+    #[test]
+    fn test_count_statuses_skips_tombstones_and_blanks() {
+        let beads = vec![
+            bead_with_status("a-1", "active"),
+            bead_with_status("a-2", "tombstone"),
+            bead_with_status("a-3", ""),
+            bead_with_status("a-4", "  "),
+        ];
+
+        let counts = count_statuses(&beads);
+
+        assert_eq!(counts.get("active"), Some(&1));
+        assert_eq!(counts.len(), 1);
+    }
+
+    #[test]
+    fn test_count_statuses_empty_for_no_beads() {
+        assert!(count_statuses(&[]).is_empty());
+    }
 
     #[test]
     fn test_is_non_issue_record_memory() {

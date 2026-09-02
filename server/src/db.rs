@@ -6,6 +6,7 @@
 use chrono::Utc;
 use rusqlite::{params, Connection, Result as SqliteResult};
 use serde::{Deserialize, Serialize};
+use std::collections::HashMap;
 use std::path::PathBuf;
 use std::sync::Mutex;
 use thiserror::Error;
@@ -68,25 +69,28 @@ pub struct Tag {
     pub color: String,
 }
 
-/// Cached per-project bead counts by status.
+/// Cached per-project bead counts, keyed by raw status.
 ///
 /// Populated on every successful `/api/beads` read and consumed by
 /// `/api/projects` so the home page can render donut charts without
 /// waiting on a full beads fetch.
 ///
-/// Note: the `inreview` column is kept even though bd 1.0.2 removed the
-/// built-in status — users may define a custom `status.custom=inreview`
-/// via `.beads/config.yaml` and we preserve compat.
-#[derive(Debug, Clone, Serialize, Deserialize)]
+/// Statuses are free-form per-tenant lifecycle strings (`backlog`,
+/// `pending-approval`, `ready`, …), so the counts are a map rather than
+/// bd's four native statuses. Only statuses with at least one bead carry
+/// an entry.
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct CachedCounts {
-    pub open: i64,
-    pub in_progress: i64,
-    pub inreview: i64,
-    pub closed: i64,
+    /// Bead counts keyed by raw status.
+    pub statuses: HashMap<String, i64>,
     pub data_source: Option<String>,
     pub updated_at: String,
 }
+
+/// bd's four native statuses, mirrored into the fixed cache columns so an
+/// older build reading the same SQLite file still sees sane numbers.
+const LEGACY_STATUS_COLUMNS: [&str; 4] = ["open", "in_progress", "inreview", "closed"];
 
 /// Input for creating a new project
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -240,6 +244,13 @@ impl Database {
                     data_source TEXT,
                     updated_at TEXT NOT NULL
                 )",
+            ),
+            // Raw-status counts as a JSON object. Added alongside the
+            // fixed native columns rather than replacing them, so rows
+            // written by older builds keep loading.
+            (
+                4,
+                "ALTER TABLE project_bead_counts ADD COLUMN status_counts TEXT",
             ),
         ];
 
@@ -492,15 +503,37 @@ impl Database {
     pub fn get_cached_counts(&self, project_id: &str) -> Result<Option<CachedCounts>, DbError> {
         let conn = self.conn.lock().unwrap();
         let row = conn.query_row(
-            "SELECT open, in_progress, inreview, closed, data_source, updated_at
+            "SELECT open, in_progress, inreview, closed, data_source, updated_at, status_counts
              FROM project_bead_counts WHERE project_id = ?1",
             params![project_id],
             |row| {
+                let legacy: [i64; 4] = [row.get(0)?, row.get(1)?, row.get(2)?, row.get(3)?];
+                let raw_json: Option<String> = row.get(6)?;
+                let statuses = raw_json
+                    .as_deref()
+                    .and_then(|json| match serde_json::from_str::<HashMap<String, i64>>(json) {
+                        Ok(map) => Some(map),
+                        Err(e) => {
+                            tracing::warn!(
+                                "Ignoring unparseable status_counts cache blob: {}",
+                                e
+                            );
+                            None
+                        }
+                    })
+                    // Rows written before the raw-status map existed only
+                    // carry the four native columns.
+                    .unwrap_or_else(|| {
+                        LEGACY_STATUS_COLUMNS
+                            .iter()
+                            .zip(legacy)
+                            .filter(|(_, count)| *count > 0)
+                            .map(|(status, count)| ((*status).to_string(), count))
+                            .collect()
+                    });
+
                 Ok(CachedCounts {
-                    open: row.get(0)?,
-                    in_progress: row.get(1)?,
-                    inreview: row.get(2)?,
-                    closed: row.get(3)?,
+                    statuses,
                     data_source: row.get(4)?,
                     updated_at: row.get(5)?,
                 })
@@ -523,26 +556,42 @@ impl Database {
         project_id: &str,
         counts: &CachedCounts,
     ) -> Result<(), DbError> {
+        // A `HashMap<String, i64>` is always representable as JSON; the
+        // fallback exists so a hypothetical failure degrades to the
+        // legacy-column path instead of taking the request down.
+        let status_counts = serde_json::to_string(&counts.statuses).unwrap_or_else(|e| {
+            tracing::warn!("Failed to serialize status counts, caching legacy columns only: {}", e);
+            "{}".to_string()
+        });
+        // Mirror the four native statuses into the fixed columns so an
+        // older build pointed at the same file still reads sane numbers.
+        let legacy: Vec<i64> = LEGACY_STATUS_COLUMNS
+            .iter()
+            .map(|status| counts.statuses.get(*status).copied().unwrap_or(0))
+            .collect();
+
         let conn = self.conn.lock().unwrap();
         conn.execute(
             "INSERT INTO project_bead_counts
-                (project_id, open, in_progress, inreview, closed, data_source, updated_at)
-             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)
+                (project_id, open, in_progress, inreview, closed, data_source, updated_at, status_counts)
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8)
              ON CONFLICT(project_id) DO UPDATE SET
                 open = excluded.open,
                 in_progress = excluded.in_progress,
                 inreview = excluded.inreview,
                 closed = excluded.closed,
                 data_source = excluded.data_source,
-                updated_at = excluded.updated_at",
+                updated_at = excluded.updated_at,
+                status_counts = excluded.status_counts",
             params![
                 project_id,
-                counts.open,
-                counts.in_progress,
-                counts.inreview,
-                counts.closed,
+                legacy[0],
+                legacy[1],
+                legacy[2],
+                legacy[3],
                 counts.data_source,
                 counts.updated_at,
+                status_counts,
             ],
         )?;
         Ok(())
@@ -951,22 +1000,96 @@ mod tests {
         assert!(initial.is_none(), "expected no cache row before first upsert");
 
         let counts = CachedCounts {
-            open: 3,
-            in_progress: 1,
-            inreview: 0,
-            closed: 7,
+            statuses: HashMap::from([
+                ("ready".to_string(), 3i64),
+                ("active".to_string(), 1i64),
+                ("pending-approval".to_string(), 7i64),
+            ]),
             data_source: Some("cli".to_string()),
             updated_at: "2026-04-22T10:00:00Z".to_string(),
         };
         db.upsert_cached_counts(&project.id, &counts).unwrap();
 
         let fetched = db.get_cached_counts(&project.id).unwrap().unwrap();
-        assert_eq!(fetched.open, 3);
-        assert_eq!(fetched.in_progress, 1);
-        assert_eq!(fetched.inreview, 0);
-        assert_eq!(fetched.closed, 7);
+        assert_eq!(fetched.statuses.get("ready"), Some(&3));
+        assert_eq!(fetched.statuses.get("active"), Some(&1));
+        assert_eq!(fetched.statuses.get("pending-approval"), Some(&7));
+        assert_eq!(fetched.statuses.len(), 3);
         assert_eq!(fetched.data_source.as_deref(), Some("cli"));
         assert_eq!(fetched.updated_at, "2026-04-22T10:00:00Z");
+    }
+
+    #[test]
+    fn test_cached_counts_reads_legacy_row_without_status_counts() {
+        // A cache row written by an older build has the four native
+        // columns populated and a NULL status_counts JSON blob. Startup
+        // must not break, and the map is rebuilt from the columns.
+        let db = Database::new_in_memory().unwrap();
+        let project = db
+            .create_project(CreateProjectInput {
+                name: "Legacy".to_string(),
+                path: "/legacy".to_string(),
+                local_path: None,
+            })
+            .unwrap();
+
+        {
+            let conn = db.conn.lock().unwrap();
+            conn.execute(
+                "INSERT INTO project_bead_counts
+                    (project_id, open, in_progress, inreview, closed, data_source, updated_at)
+                 VALUES (?1, 4, 2, 0, 9, 'jsonl', '2026-04-22T10:00:00Z')",
+                params![project.id],
+            )
+            .unwrap();
+        }
+
+        let fetched = db.get_cached_counts(&project.id).unwrap().unwrap();
+        assert_eq!(fetched.statuses.get("open"), Some(&4));
+        assert_eq!(fetched.statuses.get("in_progress"), Some(&2));
+        assert_eq!(fetched.statuses.get("closed"), Some(&9));
+        // Zero-count native statuses carry no entry.
+        assert_eq!(fetched.statuses.get("inreview"), None);
+        assert_eq!(fetched.data_source.as_deref(), Some("jsonl"));
+    }
+
+    #[test]
+    fn test_cached_counts_keeps_legacy_columns_in_sync() {
+        // Older builds read the four fixed columns directly, so a write
+        // from this build must keep them populated from the map.
+        let db = Database::new_in_memory().unwrap();
+        let project = db
+            .create_project(CreateProjectInput {
+                name: "Compat".to_string(),
+                path: "/compat".to_string(),
+                local_path: None,
+            })
+            .unwrap();
+
+        db.upsert_cached_counts(
+            &project.id,
+            &CachedCounts {
+                statuses: HashMap::from([
+                    ("open".to_string(), 5i64),
+                    ("closed".to_string(), 6i64),
+                    ("ready".to_string(), 11i64),
+                ]),
+                data_source: None,
+                updated_at: "2026-04-22T10:00:00Z".to_string(),
+            },
+        )
+        .unwrap();
+
+        let conn = db.conn.lock().unwrap();
+        let (open, closed): (i64, i64) = conn
+            .query_row(
+                "SELECT open, closed FROM project_bead_counts WHERE project_id = ?1",
+                params![project.id],
+                |r| Ok((r.get(0)?, r.get(1)?)),
+            )
+            .unwrap();
+        assert_eq!(open, 5);
+        assert_eq!(closed, 6);
     }
 
     #[test]
@@ -981,30 +1104,30 @@ mod tests {
             .unwrap();
 
         let first = CachedCounts {
-            open: 10,
-            in_progress: 2,
-            inreview: 1,
-            closed: 0,
+            statuses: HashMap::from([
+                ("backlog".to_string(), 10i64),
+                ("active".to_string(), 2i64),
+            ]),
             data_source: Some("jsonl".to_string()),
             updated_at: "2026-04-22T10:00:00Z".to_string(),
         };
         db.upsert_cached_counts(&project.id, &first).unwrap();
 
         let second = CachedCounts {
-            open: 8,
-            in_progress: 3,
-            inreview: 2,
-            closed: 5,
+            statuses: HashMap::from([
+                ("ready".to_string(), 8i64),
+                ("acceptance".to_string(), 3i64),
+            ]),
             data_source: Some("dolt-direct".to_string()),
             updated_at: "2026-04-22T11:00:00Z".to_string(),
         };
         db.upsert_cached_counts(&project.id, &second).unwrap();
 
         let fetched = db.get_cached_counts(&project.id).unwrap().unwrap();
-        assert_eq!(fetched.open, 8);
-        assert_eq!(fetched.in_progress, 3);
-        assert_eq!(fetched.inreview, 2);
-        assert_eq!(fetched.closed, 5);
+        assert_eq!(fetched.statuses.get("ready"), Some(&8));
+        assert_eq!(fetched.statuses.get("acceptance"), Some(&3));
+        // The replaced write's statuses are gone, not merged.
+        assert_eq!(fetched.statuses.get("backlog"), None);
         assert_eq!(fetched.data_source.as_deref(), Some("dolt-direct"));
         assert_eq!(fetched.updated_at, "2026-04-22T11:00:00Z");
 
@@ -1034,10 +1157,7 @@ mod tests {
         db.upsert_cached_counts(
             &project.id,
             &CachedCounts {
-                open: 1,
-                in_progress: 0,
-                inreview: 0,
-                closed: 0,
+                statuses: HashMap::from([("ready".to_string(), 1i64)]),
                 data_source: None,
                 updated_at: "2026-04-22T10:00:00Z".to_string(),
             },

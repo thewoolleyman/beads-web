@@ -1,6 +1,6 @@
 "use client";
 
-import { useState } from "react";
+import { useMemo, useState } from "react";
 
 import { useRouter } from "next/navigation";
 
@@ -22,6 +22,7 @@ import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "@/comp
 import { useToast } from "@/hooks/use-toast";
 import * as api from "@/lib/api";
 import type { Tag } from "@/lib/db";
+import { humanizeStatus, laneAccent, orderStatuses } from "@/lib/lanes";
 import { deriveBeadPrefix } from "@/lib/utils";
 import type { BeadCounts } from "@/types";
 
@@ -75,7 +76,7 @@ export function ProjectCard({
   path,
   localPath,
   tags,
-  beadCounts = { open: 0, in_progress: 0, inreview: 0, closed: 0 },
+  beadCounts = {},
   countsLoaded = true,
   dataSource,
   beadError,
@@ -90,6 +91,23 @@ export function ProjectCard({
   const [isOpening, setIsOpening] = useState<string | null>(null);
   const [settingsOpen, setSettingsOpen] = useState(false);
   const { toast } = useToast();
+
+  /**
+   * Per-status counts to spell out under the title: every raw status
+   * that actually has beads, in board lane order.
+   */
+  const statusCounts = useMemo(
+    () =>
+      orderStatuses(
+        Object.keys(beadCounts).filter((status) => (beadCounts[status] ?? 0) > 0)
+      ).map((status) => ({
+        status,
+        title: humanizeStatus(status),
+        count: beadCounts[status],
+        color: laneAccent(status).color,
+      })),
+    [beadCounts]
+  );
 
   // For dolt projects, use localPath for filesystem operations; for regular projects use path
   const isDolt = path.startsWith("dolt://");
@@ -192,6 +210,29 @@ export function ProjectCard({
           {formatProjectName(name)}
         </h3>
       </div>
+
+      {/* Per-status counts: one entry per raw lifecycle status present */}
+      {countsLoaded && statusCounts.length > 0 && (
+        <ul
+          className="mb-2 flex flex-wrap items-center gap-x-3 gap-y-1"
+          aria-label="Bead counts by status"
+        >
+          {statusCounts.map((entry) => (
+            <li
+              key={entry.status}
+              className="flex items-center gap-1 text-[11px] leading-none"
+            >
+              <span
+                className="h-2 w-2 shrink-0 rounded-sm"
+                style={{ backgroundColor: entry.color }}
+                aria-hidden="true"
+              />
+              <span className="text-t-muted">{entry.title}</span>
+              <span className="font-mono text-t-secondary">{entry.count}</span>
+            </li>
+          ))}
+        </ul>
+      )}
 
       {/* Bottom row: Path left, actions right */}
       <div className="flex items-center justify-between gap-2">

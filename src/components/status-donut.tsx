@@ -2,14 +2,15 @@
 
 import { useMemo, useState } from "react";
 
-interface BeadCounts {
-  open: number;
-  in_progress: number;
-  inreview: number;
-  closed: number;
-}
+import { humanizeStatus, laneAccent, orderStatuses } from "@/lib/lanes";
+import type { BeadCounts } from "@/types";
 
 interface StatusDonutProps {
+  /**
+   * Bead counts keyed by raw status. Statuses are free-form per-tenant
+   * lifecycle strings, so the donut renders one segment per status
+   * present rather than bd's four native statuses.
+   */
   beadCounts: BeadCounts;
   size?: number;
   className?: string;
@@ -22,50 +23,51 @@ interface StatusDonutProps {
   countsLoaded?: boolean;
 }
 
-// Status colors via CSS variables (semantic tokens from globals.css)
-const STATUS_COLORS = {
-  open: "hsl(var(--status-open))",
-  in_progress: "hsl(var(--status-progress))",
-  inreview: "hsl(var(--status-review))",
-  closed: "hsl(var(--status-closed))",
-};
+/** One donut segment: a raw status, its count, and its lane accent. */
+interface Segment {
+  status: string;
+  title: string;
+  count: number;
+  fill: string;
+}
 
-// Custom tooltip showing all statuses
-function StatusTooltip({ beadCounts, total }: { beadCounts: BeadCounts; total: number }) {
+/**
+ * Turn a counts map into ordered, renderable segments.
+ *
+ * Counts arriving over the wire are untrusted: a missing or non-numeric
+ * value must never reach the geometry maths, or every path `d` becomes
+ * `M NaN NaN …`. Non-finite and non-positive counts are dropped here.
+ */
+export function toSegments(beadCounts: BeadCounts): Segment[] {
+  const counts = beadCounts ?? {};
+  const usable = Object.keys(counts).filter((status) => {
+    const count = counts[status];
+    return typeof count === "number" && Number.isFinite(count) && count > 0;
+  });
+
+  return orderStatuses(usable).map((status) => ({
+    status,
+    title: humanizeStatus(status),
+    count: counts[status],
+    fill: laneAccent(status).color,
+  }));
+}
+
+// Custom tooltip showing every status present
+function StatusTooltip({ segments, total }: { segments: Segment[]; total: number }) {
   return (
     <div className="rounded-lg border border-b-strong bg-surface-raised px-3 py-2 shadow-lg">
       <div className="mb-1.5 text-xs font-medium text-t-secondary">
         {total} task{total !== 1 ? "s" : ""}
       </div>
       <div className="space-y-1">
-        {beadCounts.open > 0 && (
-          <div className="flex items-center gap-2 text-xs">
-            <div className="h-2 w-2 rounded-sm" style={{ backgroundColor: STATUS_COLORS.open }} />
-            <span className="text-t-tertiary">Open</span>
-            <span className="ml-auto font-mono text-t-primary">{beadCounts.open}</span>
+        {segments.map((segment) => (
+          <div key={segment.status} className="flex items-center gap-2 text-xs">
+            <div className="h-2 w-2 rounded-sm" style={{ backgroundColor: segment.fill }} />
+            <span className="text-t-tertiary">{segment.title}</span>
+            <span className="ml-auto font-mono text-t-primary">{segment.count}</span>
           </div>
-        )}
-        {beadCounts.in_progress > 0 && (
-          <div className="flex items-center gap-2 text-xs">
-            <div className="h-2 w-2 rounded-sm" style={{ backgroundColor: STATUS_COLORS.in_progress }} />
-            <span className="text-t-tertiary">In Progress</span>
-            <span className="ml-auto font-mono text-t-primary">{beadCounts.in_progress}</span>
-          </div>
-        )}
-        {beadCounts.inreview > 0 && (
-          <div className="flex items-center gap-2 text-xs">
-            <div className="h-2 w-2 rounded-sm" style={{ backgroundColor: STATUS_COLORS.inreview }} />
-            <span className="text-t-tertiary">In Review</span>
-            <span className="ml-auto font-mono text-t-primary">{beadCounts.inreview}</span>
-          </div>
-        )}
-        {beadCounts.closed > 0 && (
-          <div className="flex items-center gap-2 text-xs">
-            <div className="h-2 w-2 rounded-sm" style={{ backgroundColor: STATUS_COLORS.closed }} />
-            <span className="text-t-tertiary">Closed</span>
-            <span className="ml-auto font-mono text-t-primary">{beadCounts.closed}</span>
-          </div>
-        )}
+        ))}
       </div>
     </div>
   );
@@ -74,24 +76,22 @@ function StatusTooltip({ beadCounts, total }: { beadCounts: BeadCounts; total: n
 export function StatusDonut({ beadCounts, size = 40, className, countsLoaded = true }: StatusDonutProps) {
   const [isHovered, setIsHovered] = useState(false);
 
-  const chartData = useMemo(() => {
-    return [
-      { status: "open", count: beadCounts.open, fill: STATUS_COLORS.open },
-      { status: "in_progress", count: beadCounts.in_progress, fill: STATUS_COLORS.in_progress },
-      { status: "inreview", count: beadCounts.inreview, fill: STATUS_COLORS.inreview },
-      { status: "closed", count: beadCounts.closed, fill: STATUS_COLORS.closed },
-    ].filter((item) => item.count > 0);
-  }, [beadCounts]);
+  const segments = useMemo(() => toSegments(beadCounts), [beadCounts]);
 
-  const total = useMemo(() => {
-    return beadCounts.open + beadCounts.in_progress + beadCounts.inreview + beadCounts.closed;
-  }, [beadCounts]);
+  const total = useMemo(
+    () => segments.reduce((sum, segment) => sum + segment.count, 0),
+    [segments]
+  );
 
   // Dashed placeholder when counts haven't loaded yet, OR when the
   // project genuinely has no tasks. Same visual — the former resolves
   // to a solid donut on its own once `countsLoaded` flips to true, the
   // latter stays dashed indefinitely which is correct semantics.
-  if (!countsLoaded || total === 0) {
+  //
+  // `total` cannot be NaN here: `toSegments` drops every non-finite
+  // count, so a malformed payload lands in this branch instead of
+  // producing `M NaN NaN` path geometry.
+  if (!countsLoaded || total <= 0) {
     const label = !countsLoaded ? "Loading tasks" : "No tasks";
     return (
       <div
@@ -110,8 +110,8 @@ export function StatusDonut({ beadCounts, size = 40, className, countsLoaded = t
 
   const innerRadius = size * 0.32;
   const outerRadius = size * 0.48;
-  // Only add padding when there are multiple segments
-  const paddingAngle = chartData.length > 1 ? 3 : 0;
+  // Only add padding between segments when there is more than one.
+  const paddingAngle = segments.length > 1 ? 3 : 0;
 
   return (
     <div
@@ -123,16 +123,16 @@ export function StatusDonut({ beadCounts, size = 40, className, countsLoaded = t
       <svg width={size} height={size} viewBox={`0 0 ${size} ${size}`}>
         <g transform={`translate(${size / 2}, ${size / 2})`}>
           {/* Render pie segments */}
-          {chartData.map((entry, index) => {
+          {segments.map((entry, index) => {
             // Calculate angles for each segment
-            const startAngle = chartData
+            const startAngle = segments
               .slice(0, index)
               .reduce((acc, d) => acc + (d.count / total) * 360, 0);
             const segmentAngle = (entry.count / total) * 360;
             const endAngle = startAngle + segmentAngle;
 
             // Check if this is a full circle (single segment covering 100%)
-            const isFullCircle = chartData.length === 1;
+            const isFullCircle = segments.length === 1;
 
             if (isFullCircle) {
               // For full circle, use two semicircular arcs
@@ -141,11 +141,13 @@ export function StatusDonut({ beadCounts, size = 40, className, countsLoaded = t
                 <g key={entry.status}>
                   {/* First semicircle (top half) */}
                   <path
+                    data-status={entry.status}
                     d={`M 0 ${-outerRadius} A ${outerRadius} ${outerRadius} 0 0 1 0 ${outerRadius} L 0 ${innerRadius} A ${innerRadius} ${innerRadius} 0 0 0 0 ${-innerRadius} Z`}
                     fill={entry.fill}
                   />
                   {/* Second semicircle (bottom half) */}
                   <path
+                    data-status={entry.status}
                     d={`M 0 ${outerRadius} A ${outerRadius} ${outerRadius} 0 0 1 0 ${-outerRadius} L 0 ${-innerRadius} A ${innerRadius} ${innerRadius} 0 0 0 0 ${innerRadius} Z`}
                     fill={entry.fill}
                   />
@@ -153,9 +155,11 @@ export function StatusDonut({ beadCounts, size = 40, className, countsLoaded = t
               );
             }
 
-            // Add small padding between segments (only if multiple segments)
-            const adjustedStart = startAngle + paddingAngle / 2;
-            const adjustedEnd = endAngle - paddingAngle / 2;
+            // Gap between segments, never wide enough to invert a thin
+            // slice into a negative sweep.
+            const pad = Math.min(paddingAngle, segmentAngle * 0.5);
+            const adjustedStart = startAngle + pad / 2;
+            const adjustedEnd = endAngle - pad / 2;
 
             // Convert to radians (SVG uses radians, start from top)
             const startRad = ((adjustedStart - 90) * Math.PI) / 180;
@@ -184,6 +188,7 @@ export function StatusDonut({ beadCounts, size = 40, className, countsLoaded = t
             return (
               <path
                 key={entry.status}
+                data-status={entry.status}
                 d={d}
                 fill={entry.fill}
               />
@@ -201,7 +206,7 @@ export function StatusDonut({ beadCounts, size = 40, className, countsLoaded = t
       {/* Tooltip - shown on hover anywhere in the donut area */}
       {isHovered && (
         <div className="absolute left-1/2 top-full z-50 mt-2 -translate-x-1/2 whitespace-nowrap">
-          <StatusTooltip beadCounts={beadCounts} total={total} />
+          <StatusTooltip segments={segments} total={total} />
         </div>
       )}
     </div>

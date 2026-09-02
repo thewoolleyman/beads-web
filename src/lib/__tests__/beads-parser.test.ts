@@ -96,3 +96,49 @@ describe('unknown-status plumbing', () => {
     expect(exported).not.toContain('getUnknownStatusNames');
   });
 });
+
+describe('groupBeadsByStatus', () => {
+  function bead(id: string, status: string, updated: string) {
+    return { id, status, updated_at: updated } as never;
+  }
+
+  it('groups by the raw status instead of folding onto four native buckets', () => {
+    const grouped = parser.groupBeadsByStatus([
+      bead('a-1', 'ready', '2026-01-03T00:00:00Z'),
+      bead('a-2', 'pending-approval', '2026-01-02T00:00:00Z'),
+      bead('a-3', 'ready', '2026-01-04T00:00:00Z'),
+      bead('a-4', 'closed', '2026-01-01T00:00:00Z'),
+    ]);
+
+    expect(Object.keys(grouped).sort()).toEqual([
+      'closed',
+      'pending-approval',
+      'ready',
+    ]);
+    expect(grouped.ready).toHaveLength(2);
+    expect(grouped['pending-approval']).toHaveLength(1);
+    expect(grouped.open).toBeUndefined();
+  });
+
+  it('sorts each bucket by updated_at descending', () => {
+    const grouped = parser.groupBeadsByStatus([
+      bead('a-1', 'active', '2026-01-01T00:00:00Z'),
+      bead('a-2', 'active', '2026-01-05T00:00:00Z'),
+    ]);
+
+    expect(grouped.active.map((b) => b.id)).toEqual(['a-2', 'a-1']);
+  });
+
+  it('creates no buckets for an empty bead list', () => {
+    expect(parser.groupBeadsByStatus([])).toEqual({});
+  });
+
+  it('drops beads with a blank status', () => {
+    const grouped = parser.groupBeadsByStatus([
+      bead('a-1', '', '2026-01-01T00:00:00Z'),
+      bead('a-2', 'ready', '2026-01-01T00:00:00Z'),
+    ]);
+
+    expect(Object.keys(grouped)).toEqual(['ready']);
+  });
+});

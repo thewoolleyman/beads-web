@@ -1,12 +1,12 @@
 /**
- * Bead counts by status for a project
+ * Bead counts for a project, keyed by raw status.
+ *
+ * Statuses are free-form per-tenant lifecycle strings (see
+ * {@link BeadStatus}), so the counts are a map rather than a fixed set of
+ * bd's four native statuses. Absent keys mean zero; only statuses that
+ * actually occur are present.
  */
-export interface BeadCounts {
-  open: number;
-  in_progress: number;
-  inreview: number;
-  closed: number;
-}
+export type BeadCounts = Record<string, number>;
 
 /**
  * Cached per-project bead counts served by `GET /api/projects`.
@@ -15,7 +15,9 @@ export interface BeadCounts {
  * used by the home page to render donut charts immediately on first
  * paint, before fresh counts finish loading.
  */
-export interface CachedCounts extends BeadCounts {
+export interface CachedCounts {
+  /** Bead counts keyed by raw status. */
+  statuses: BeadCounts;
   /** Source that produced these cached counts (e.g. 'dolt-direct', 'jsonl'). */
   dataSource?: string | null;
   /** ISO-8601 timestamp of when the cache row was last refreshed. */

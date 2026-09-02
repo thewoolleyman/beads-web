@@ -17,6 +17,7 @@ import type { Project } from '@/types';
 
 const getProjectsWithTagsMock = vi.fn();
 const loadProjectBeadsMock = vi.fn();
+const groupBeadsByStatusMock = vi.fn(() => ({}));
 
 vi.mock('@/lib/db', () => ({
   getProjectsWithTags: (...args: unknown[]) => getProjectsWithTagsMock(...args),
@@ -27,12 +28,7 @@ vi.mock('@/lib/beads-parser', () => ({
   loadProjectBeads: (...args: unknown[]) => loadProjectBeadsMock(...args),
   // Not called in these tests because loadProjectBeads never resolves, but
   // keep a stub so importers don't crash.
-  groupBeadsByStatus: vi.fn(() => ({
-    open: [],
-    in_progress: [],
-    inreview: [],
-    closed: [],
-  })),
+  groupBeadsByStatus: () => groupBeadsByStatusMock(),
 }));
 
 vi.mock('@/lib/api', () => ({
@@ -50,6 +46,8 @@ import { useProjects } from '../use-projects';
 beforeEach(() => {
   getProjectsWithTagsMock.mockReset();
   loadProjectBeadsMock.mockReset();
+  groupBeadsByStatusMock.mockReset();
+  groupBeadsByStatusMock.mockReturnValue({});
   // Never resolve — lets us observe the cached-seed state in isolation.
   loadProjectBeadsMock.mockImplementation(() => new Promise(() => {}));
 });
@@ -64,10 +62,7 @@ describe('useProjects — cached counts seeding', () => {
       lastOpened: '2026-04-22T00:00:00Z',
       createdAt: '2026-04-22T00:00:00Z',
       cachedCounts: {
-        open: 3,
-        in_progress: 1,
-        inreview: 0,
-        closed: 5,
+        statuses: { ready: 3, active: 1, closed: 5 },
         dataSource: 'dolt-direct',
         updatedAt: '2026-04-22T00:00:00Z',
       },
@@ -85,12 +80,7 @@ describe('useProjects — cached counts seeding', () => {
 
     expect(result.current.projects).toHaveLength(1);
     const seeded = result.current.projects[0];
-    expect(seeded.beadCounts).toEqual({
-      open: 3,
-      in_progress: 1,
-      inreview: 0,
-      closed: 5,
-    });
+    expect(seeded.beadCounts).toEqual({ ready: 3, active: 1, closed: 5 });
     expect(seeded.countsLoaded).toBe(true);
     expect(seeded.dataSource).toBe('dolt-direct');
   });
@@ -116,13 +106,40 @@ describe('useProjects — cached counts seeding', () => {
 
     const seeded = result.current.projects[0];
     expect(seeded.countsLoaded).toBe(false);
-    // Zero counts are a fallback — NOT a real "0 tasks" signal. The
+    // An empty map is a fallback — NOT a real "0 tasks" signal. The
     // dashed donut rendering in project-card distinguishes these.
-    expect(seeded.beadCounts).toEqual({
-      open: 0,
-      in_progress: 0,
-      inreview: 0,
-      closed: 0,
+    expect(seeded.beadCounts).toEqual({});
+  });
+
+  it('replaces the seed with per-raw-status counts once beads land', async () => {
+    const project: Project = {
+      id: 'p3',
+      name: 'lifecycle-project',
+      path: '/tmp/lifecycle-project',
+      tags: [],
+      lastOpened: '2026-04-22T00:00:00Z',
+      createdAt: '2026-04-22T00:00:00Z',
+      cachedCounts: null,
+    };
+
+    getProjectsWithTagsMock.mockResolvedValueOnce([project]);
+    loadProjectBeadsMock.mockResolvedValue({ beads: [], source: 'dolt-direct' });
+    groupBeadsByStatusMock.mockReturnValue({
+      backlog: [{ id: 'a' }],
+      ready: [{ id: 'b' }, { id: 'c' }],
+      closed: [{ id: 'd' }, { id: 'e' }, { id: 'f' }],
+    });
+
+    const { result } = renderHook(() => useProjects());
+
+    await waitFor(() => {
+      expect(result.current.projects[0]?.countsLoaded).toBe(true);
+    });
+
+    expect(result.current.projects[0].beadCounts).toEqual({
+      backlog: 1,
+      ready: 2,
+      closed: 3,
     });
   });
 });

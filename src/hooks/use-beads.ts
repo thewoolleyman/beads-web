@@ -37,14 +37,12 @@ export interface UseBeadsResult {
 }
 
 /**
- * Empty grouped beads object for initial state
+ * Empty grouped beads object for initial state.
+ *
+ * Buckets are keyed by raw status and only exist for statuses actually
+ * present in the data, so the empty state carries no keys at all.
  */
-const EMPTY_GROUPED: Record<BeadStatus, Bead[]> = {
-  open: [],
-  in_progress: [],
-  inreview: [],
-  closed: [],
-};
+const EMPTY_GROUPED: Record<BeadStatus, Bead[]> = {};
 
 /**
  * Hook to load and watch beads from a project directory.
@@ -64,10 +62,9 @@ const EMPTY_GROUPED: Record<BeadStatus, Bead[]> = {
  *
  *   return (
  *     <div>
- *       <Column title="Open" beads={beadsByStatus.open} />
- *       <Column title="In Progress" beads={beadsByStatus.in_progress} />
- *       <Column title="In Review" beads={beadsByStatus.inreview} />
- *       <Column title="Closed" beads={beadsByStatus.closed} />
+ *       {Object.entries(beadsByStatus).map(([status, laneBeads]) => (
+ *         <Column key={status} title={humanizeStatus(status)} beads={laneBeads} />
+ *       ))}
  *     </div>
  *   );
  * }
