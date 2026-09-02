@@ -45,9 +45,9 @@ describe('formatStatus', () => {
     expect(formatStatus('closed')).toBe('Closed');
   });
 
-  it('returns unknown status as-is', () => {
-    // @ts-expect-error testing unknown status
+  it('returns an unlisted status as-is', () => {
     expect(formatStatus('unknown')).toBe('unknown');
+    expect(formatStatus('pending-approval')).toBe('pending-approval');
   });
 });
 

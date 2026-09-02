@@ -35,7 +35,6 @@ import { useProject } from "@/hooks/use-project";
 import { useTheme } from "@/hooks/use-theme";
 import { useWorktreeStatuses } from "@/hooks/use-worktree-statuses";
 import { isBlocked } from "@/lib/bead-utils";
-import { getUnknownStatusBeads, getUnknownStatusNames } from "@/lib/beads-parser";
 import { getIssueTypeMeta } from "@/lib/issue-types";
 import type { IssueTypeFilter } from "@/lib/issue-types";
 import { isDoltProject } from "@/lib/utils";
@@ -186,12 +185,6 @@ export default function KanbanBoard() {
     return grouped;
   }, [topLevelBeads]);
 
-  /**
-   * Detect beads with truly unknown statuses for the warning indicator.
-   */
-  const unknownStatusBeads = useMemo(() => getUnknownStatusBeads(beads), [beads]);
-  const unknownStatusNames = useMemo(() => getUnknownStatusNames(beads), [beads]);
-
   // Detail panel state
   const {
     detailBead,
@@ -339,9 +332,6 @@ export default function KanbanBoard() {
           onAgentsToggle={() => setIsAgentsOpen((prev) => !prev)}
           // Filesystem features require a real project path
           hasProjectPath={!isDoltOnly}
-          // Unknown status warning
-          unknownStatusCount={unknownStatusBeads.length}
-          unknownStatusNames={unknownStatusNames}
           onNewBead={() => setIsCreateOpen(true)}
         />
       </div>
