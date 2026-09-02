@@ -36,14 +36,6 @@ function formatTimestamp(date: Date): string {
 }
 
 /**
- * Truncate a string to maxLength characters with ellipsis
- */
-function truncateTitle(title: string, maxLength: number = 30): string {
-  if (title.length <= maxLength) return title;
-  return title.slice(0, maxLength - 1) + "\u2026";
-}
-
-/**
  * Build timeline events from bead and comments
  */
 function buildTimelineEvents(bead: Bead, comments: Comment[], childBeads: Bead[] = []): TimelineEvent[] {
@@ -83,13 +75,12 @@ function buildTimelineEvents(bead: Bead, comments: Comment[], childBeads: Bead[]
   childBeads.forEach((child) => {
     const childCreatedAt = new Date(child.created_at);
     const childUpdatedAt = new Date(child.updated_at);
-    const truncatedTitle = truncateTitle(child.title);
 
     // Child created event
     events.push({
       id: `child-created-${child.id}`,
       type: "child_created",
-      description: `Task created: ${truncatedTitle}`,
+      description: `Task created: ${child.title}`,
       timestamp: childCreatedAt,
     });
 
@@ -98,7 +89,7 @@ function buildTimelineEvents(bead: Bead, comments: Comment[], childBeads: Bead[]
       events.push({
         id: `child-status-${child.id}`,
         type: "child_status_change",
-        description: `Task \u2192 ${child.status}: ${truncatedTitle}`,
+        description: `Task \u2192 ${child.status}: ${child.title}`,
         timestamp: childUpdatedAt,
       });
     }
@@ -156,7 +147,7 @@ export function ActivityTimeline({ bead, comments, childBeads = [] }: ActivityTi
 
               {/* Content */}
               <div className="flex flex-1 items-center justify-between min-w-0">
-                <span className="text-xs text-t-tertiary truncate">
+                <span className="flex-1 min-w-0 text-xs text-t-tertiary truncate">
                   {event.description}
                 </span>
                 <span className="text-[10px] text-t-faint whitespace-nowrap ml-2">
