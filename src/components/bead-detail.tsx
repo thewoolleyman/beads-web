@@ -249,7 +249,7 @@ export function BeadDetail({
       {/* Full-screen modal panel */}
       <div
         className={cn(
-          "fixed inset-0 md:inset-[2.5vh_2.5vw] z-50 w-auto max-w-none overflow-y-auto bg-surface-base border border-b-default md:rounded-xl p-6 shadow-lg transition-opacity duration-200 ease-in-out",
+          "fixed inset-0 md:inset-[2.5%] z-50 w-auto max-w-none overflow-y-auto bg-surface-base border border-b-default md:rounded-xl p-6 shadow-lg transition-opacity duration-200 ease-in-out",
           open ? "opacity-100" : "opacity-0 invisible pointer-events-none"
         )}
       >

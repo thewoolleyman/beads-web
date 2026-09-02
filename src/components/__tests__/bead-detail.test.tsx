@@ -45,7 +45,8 @@ describe('BeadDetail full-screen modal', () => {
 
     expect(panel).toHaveClass('fixed');
     expect(panel).toHaveClass('inset-0');
-    expect(panel).toHaveClass('md:inset-[2.5vh_2.5vw]');
+    expect(panel).toHaveClass('md:inset-[2.5%]');
+    expect(panel.className).not.toContain('md:inset-[2.5vh_2.5vw]');
     expect(panel).toHaveClass('w-auto');
     expect(panel).toHaveClass('max-w-none');
     expect(panel).toHaveClass('z-50');
