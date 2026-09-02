@@ -14,7 +14,11 @@ use tracing::{info, warn};
 const CURRENT_VERSION: &str = env!("CARGO_PKG_VERSION");
 
 /// GitHub repository for release checks.
-const GITHUB_REPO: &str = "weselow/beads-web";
+///
+/// This is a fork. Self-update must resolve against the fork's own releases,
+/// never upstream's — pinned by `test_github_repo_targets_the_fork` so a merge
+/// from upstream cannot silently restore `weselow/beads-web`.
+const GITHUB_REPO: &str = "thewoolleyman/beads-web";
 
 /// Cache duration in seconds (1 hour).
 const CACHE_TTL_SECS: u64 = 3600;
@@ -570,6 +574,16 @@ rem Self-delete
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// Self-update targets the fork, not upstream.
+    ///
+    /// A merge from `weselow/beads-web` that reverts this constant would point
+    /// every forked binary's auto-updater at upstream releases and silently
+    /// overwrite it with an upstream build. Pin the value so that fails loudly.
+    #[test]
+    fn test_github_repo_targets_the_fork() {
+        assert_eq!(GITHUB_REPO, "thewoolleyman/beads-web");
+    }
 
     #[test]
     fn test_is_newer() {
