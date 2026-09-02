@@ -62,26 +62,17 @@ export interface Tag {
 }
 
 /**
- * Bead status types (the 4 kanban columns)
+ * Raw bead status.
+ *
+ * Beads statuses are free-form strings owned by each project's own
+ * lifecycle (livespec tenants use backlog / pending-approval / ready /
+ * active / acceptance / blocked / closed). They are never remapped; the
+ * board derives one lane per status via `@/lib/lanes`.
  */
-export type BeadStatus = 'open' | 'in_progress' | 'inreview' | 'closed';
+export type BeadStatus = string;
 
 /**
- * All known statuses from the Beads CLI (bd v0.47.0+).
- * The backend can send any of these; they get mapped to BeadStatus columns.
- */
-export type KnownRawStatus =
-  | BeadStatus
-  | 'blocked'
-  | 'deferred'
-  | 'tombstone'
-  | 'hooked'
-  | 'done'
-  | 'resolved'
-  | 'pending';
-
-/**
- * Badge info for beads whose original status differs from their mapped column.
+ * Badge info for a bead whose status warrants an extra marker.
  */
 export interface StatusBadgeInfo {
   /** Label shown on the badge */
@@ -89,28 +80,6 @@ export interface StatusBadgeInfo {
   /** Tailwind color classes for the badge */
   variant: 'warning' | 'muted' | 'info';
 }
-
-/**
- * Mapping from known raw statuses to their column + optional badge.
- * tombstone maps to null (hidden).
- */
-export const STATUS_MAP: Record<KnownRawStatus, { column: BeadStatus; badge?: StatusBadgeInfo } | null> = {
-  // Native column statuses (no badge needed)
-  open:        { column: 'open' },
-  in_progress: { column: 'in_progress' },
-  inreview:    { column: 'inreview' },
-  closed:      { column: 'closed' },
-  // Synonyms
-  done:        { column: 'closed' },
-  resolved:    { column: 'closed' },
-  pending:     { column: 'open' },
-  // Mapped with badges
-  blocked:     { column: 'open',        badge: { label: 'Blocked',  variant: 'warning' } },
-  deferred:    { column: 'open',        badge: { label: 'Deferred', variant: 'muted'   } },
-  hooked:      { column: 'in_progress', badge: { label: 'Waiting',  variant: 'info'    } },
-  // Hidden
-  tombstone:   null,
-};
 
 /**
  * Bead from .beads/issues.jsonl
@@ -135,9 +104,9 @@ export interface Bead {
   deps?: string[];            // Dependency IDs (blocking this task)
   blockers?: string[];        // COMPUTED: Tasks this blocks (derived from deps relationships)
   relates_to?: string[];      // Bead IDs with relates-to links (bidirectional "see also")
-  // Status mapping fields (set by beads-parser when raw status differs from column)
-  _originalStatus?: string;   // The raw status from the backend before mapping
-  _statusBadge?: StatusBadgeInfo; // Badge info if the bead was mapped to a different column
+  // Optional status annotations (unused now that raw statuses are kept verbatim)
+  _originalStatus?: string;   // The raw status from the backend
+  _statusBadge?: StatusBadgeInfo; // Extra badge to render on the card
 }
 
 /**
@@ -155,7 +124,7 @@ export interface Comment {
  * Kanban column configuration
  */
 export interface KanbanColumn {
-  id: BeadStatus;
+  id: string;
   title: string;
   beads: Bead[];
 }

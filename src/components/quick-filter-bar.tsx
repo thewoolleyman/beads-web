@@ -2,7 +2,7 @@
 
 import * as React from 'react';
 
-import { Search, X, ArrowUpDown, SlidersHorizontal, BrainCircuit, Bot, AlertTriangle, Plus, Shapes } from 'lucide-react';
+import { Search, X, ArrowUpDown, SlidersHorizontal, BrainCircuit, Bot, Plus, Shapes } from 'lucide-react';
 
 import { Button } from '@/components/ui/button';
 import {
@@ -15,12 +15,6 @@ import {
   DropdownMenuItem,
 } from '@/components/ui/dropdown-menu';
 import { Input } from '@/components/ui/input';
-import {
-  Tooltip,
-  TooltipTrigger,
-  TooltipContent,
-  TooltipProvider,
-} from '@/components/ui/tooltip';
 import { ISSUE_TYPES, getIssueTypeMeta } from '@/lib/issue-types';
 import type { IssueTypeFilter } from '@/lib/issue-types';
 import { cn } from '@/lib/utils';
@@ -75,10 +69,6 @@ interface QuickFilterBarProps {
   onAgentsToggle?: () => void;
   /** Whether the project has a filesystem path (not dolt-only) */
   hasProjectPath?: boolean;
-  /** Count of beads with truly unknown statuses */
-  unknownStatusCount?: number;
-  /** List of unknown status names for tooltip */
-  unknownStatusNames?: string[];
   /** Callback when "New" button is clicked */
   onNewBead?: () => void;
 }
@@ -124,8 +114,6 @@ export function QuickFilterBar({
   isAgentsOpen,
   onAgentsToggle,
   hasProjectPath = true,
-  unknownStatusCount = 0,
-  unknownStatusNames = [],
   onNewBead,
 }: QuickFilterBarProps) {
   const currentSortValue = `${sortField}_${sortDirection}`;
@@ -284,36 +272,6 @@ export function QuickFilterBar({
           <Bot className="size-4" aria-hidden="true" />
           Agents
         </button>
-      )}
-
-      {/* Unknown status warning indicator */}
-      {unknownStatusCount > 0 && (
-        <TooltipProvider delayDuration={200}>
-          <Tooltip>
-            <TooltipTrigger asChild>
-              <div
-                role="status"
-                className="flex items-center gap-1.5 h-8 px-2.5 text-sm font-medium rounded-md bg-blocked-accent/15 text-blocked-accent border border-blocked-accent/30"
-              >
-                <AlertTriangle className="size-4 shrink-0" aria-hidden="true" />
-                <span className="tabular-nums">{unknownStatusCount}</span>
-                <span className="sr-only">
-                  {unknownStatusCount === 1 ? 'bead has an' : 'beads have'} unknown {unknownStatusCount === 1 ? 'status' : 'statuses'}
-                </span>
-              </div>
-            </TooltipTrigger>
-            <TooltipContent side="bottom" className="max-w-xs">
-              <p className="font-medium">
-                {unknownStatusCount} {unknownStatusCount === 1 ? 'bead has an' : 'beads have'} unknown {unknownStatusCount === 1 ? 'status' : 'statuses'}
-              </p>
-              <p className="text-primary-foreground/70 mt-1">
-                {unknownStatusNames.length > 0
-                  ? `Unknown: ${unknownStatusNames.join(', ')}`
-                  : 'Mapped to Open column'}
-              </p>
-            </TooltipContent>
-          </Tooltip>
-        </TooltipProvider>
       )}
 
       {/* Spacer to push sort and filter to the right */}
