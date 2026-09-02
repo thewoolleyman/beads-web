@@ -1,6 +1,7 @@
-import { render, screen, fireEvent } from '@testing-library/react';
+import { render, screen, fireEvent, waitFor } from '@testing-library/react';
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 
+import { beadHref } from '@/lib/bead-link';
 import type { Bead } from '@/types';
 
 import { BeadDetail } from '../bead-detail';
@@ -98,5 +99,51 @@ describe('BeadDetail full-screen modal', () => {
     fireEvent.click(screen.getByRole('button', { name: 'Close' }));
 
     expect(onOpenChange).toHaveBeenCalledWith(false);
+  });
+});
+
+describe('BeadDetail copy link', () => {
+  /** Install a clipboard spy; jsdom ships no real one. */
+  function stubClipboard() {
+    const writeText = vi.fn().mockResolvedValue(undefined);
+    Object.defineProperty(navigator, 'clipboard', {
+      value: { writeText },
+      configurable: true,
+      writable: true,
+    });
+    return writeText;
+  }
+
+  it('sits in the pinned header, ahead of the close control', () => {
+    const panel = renderDetail();
+
+    const header = panel.querySelector('.sticky') as HTMLElement;
+    const copy = screen.getByRole('button', { name: /copy link/i });
+    const close = screen.getByRole('button', { name: 'Close' });
+
+    expect(header).toContainElement(copy);
+    expect(copy.compareDocumentPosition(close) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+  });
+
+  it('writes the absolute deep link for the open item', async () => {
+    const writeText = stubClipboard();
+    renderDetail();
+
+    fireEvent.click(screen.getByRole('button', { name: /copy link/i }));
+
+    await waitFor(() =>
+      expect(writeText).toHaveBeenCalledWith(
+        `${window.location.origin}${beadHref(PROJECT_ID, bead.id)}`,
+      ),
+    );
+  });
+
+  it('confirms the copy to the reader', async () => {
+    stubClipboard();
+    renderDetail();
+
+    fireEvent.click(screen.getByRole('button', { name: /copy link/i }));
+
+    expect(await screen.findByText('Copied')).toBeInTheDocument();
   });
 });
