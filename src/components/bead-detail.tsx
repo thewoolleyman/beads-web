@@ -1,10 +1,11 @@
 "use client";
 
-import { useState, useEffect, useCallback, useMemo } from "react";
+import { useState, useEffect, useCallback, useMemo, useRef } from "react";
 
 import {
   ArrowLeft,
   Calendar,
+  Check,
   Circle,
   Flag,
   Link2,
@@ -22,6 +23,7 @@ import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { toast } from "@/hooks/use-toast";
 import * as api from "@/lib/api";
+import { beadHref } from "@/lib/bead-link";
 import {
   formatBeadId,
   formatShortDate,
@@ -88,6 +90,27 @@ export function BeadDetail({
     window.addEventListener("keydown", handleKeyDown);
     return () => window.removeEventListener("keydown", handleKeyDown);
   }, [open, onOpenChange]);
+
+  // "Copy link" confirmation, reset shortly after a successful copy.
+  const [linkCopied, setLinkCopied] = useState(false);
+  const copyResetRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+
+  useEffect(() => () => {
+    if (copyResetRef.current) clearTimeout(copyResetRef.current);
+  }, []);
+
+  const handleCopyLink = useCallback(async () => {
+    try {
+      await navigator.clipboard.writeText(
+        `${window.location.origin}${beadHref(projectId, bead.id)}`,
+      );
+      setLinkCopied(true);
+      if (copyResetRef.current) clearTimeout(copyResetRef.current);
+      copyResetRef.current = setTimeout(() => setLinkCopied(false), 1500);
+    } catch {
+      // Clipboard access is unavailable in insecure contexts; nothing to do.
+    }
+  }, [projectId, bead.id]);
 
   const isReadOnly = !projectPath;
   const isDolt = projectPath ? isDoltProject(projectPath) : false;
@@ -230,8 +253,7 @@ export function BeadDetail({
           open ? "opacity-100" : "opacity-0 invisible pointer-events-none"
         )}
       >
-          {/* Pinned header: back, id, title, close. Copy-link belongs in
-              the control cluster, immediately before the Close button. */}
+          {/* Pinned header: back, id, title, copy-link, close. */}
           <div className="sticky top-0 z-10 -mx-6 -mt-6 mb-6 border-b border-b-default bg-surface-base px-6 pt-4 pb-3">
             <div className="flex items-center justify-between gap-2">
               <Button
@@ -244,6 +266,21 @@ export function BeadDetail({
                 Back
               </Button>
               <div className="flex items-center gap-1">
+                <Button
+                  variant="ghost"
+                  size="sm"
+                  onClick={handleCopyLink}
+                  aria-label="Copy link"
+                  title="Copy a link to this item"
+                  className="gap-1.5"
+                >
+                  {linkCopied ? (
+                    <Check className="h-4 w-4 text-success" aria-hidden="true" />
+                  ) : (
+                    <Link2 className="h-4 w-4" aria-hidden="true" />
+                  )}
+                  {linkCopied ? "Copied" : "Copy link"}
+                </Button>
                 <button
                   onClick={() => onOpenChange(false)}
                   className="rounded-sm p-1 opacity-70 ring-offset-background transition-opacity hover:opacity-100 focus:outline-none focus:ring-2 focus:ring-ring focus:ring-offset-2"
