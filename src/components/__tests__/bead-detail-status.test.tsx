@@ -73,3 +73,55 @@ describe('BeadDetail status label', () => {
     expect((dot as HTMLElement).style.color).toContain('--status-review');
   });
 });
+
+/**
+ * With a `projectPath` the header renders a status <select> instead of
+ * plain text. Its options used to be bd's four native statuses
+ * hardcoded, so a bead whose raw status is `ready` had no matching
+ * option and the control displayed "Open".
+ */
+describe('BeadDetail editable status control', () => {
+  function renderEditable(status: string) {
+    return render(
+      <BeadDetail
+        bead={makeBead(status)}
+        projectId="proj"
+        projectPath="/tmp/proj"
+        open
+        onOpenChange={() => {}}
+      />
+    );
+  }
+
+  it('selects the raw status of the bead, humanized', () => {
+    renderEditable('ready');
+
+    const select = screen.getByRole('combobox', { name: /status/i }) as HTMLSelectElement;
+    expect(select.value).toBe('ready');
+    expect(select.selectedOptions[0].textContent).toBe('Ready');
+  });
+
+  it('offers one option per lifecycle lane', () => {
+    renderEditable('ready');
+
+    const select = screen.getByRole('combobox', { name: /status/i }) as HTMLSelectElement;
+    const values = Array.from(select.options).map((o) => o.value);
+    expect(values).toEqual([
+      'backlog',
+      'pending-approval',
+      'ready',
+      'active',
+      'acceptance',
+      'blocked',
+      'closed',
+    ]);
+  });
+
+  it('keeps an off-lane raw status as its own option', () => {
+    renderEditable('triage');
+
+    const select = screen.getByRole('combobox', { name: /status/i }) as HTMLSelectElement;
+    expect(select.value).toBe('triage');
+    expect(Array.from(select.options).map((o) => o.value)).toContain('triage');
+  });
+});

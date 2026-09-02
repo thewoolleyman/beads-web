@@ -21,6 +21,7 @@ import { MarkdownBody } from "@/components/markdown-body";
 import { SubtaskList } from "@/components/subtask-list";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
+import { useLanes } from "@/hooks/use-lanes";
 import { toast } from "@/hooks/use-toast";
 import * as api from "@/lib/api";
 import { beadHref } from "@/lib/bead-link";
@@ -31,7 +32,7 @@ import {
 } from "@/lib/bead-utils";
 import { updateTitle, updateDescription, updateStatus as cliUpdateStatus } from "@/lib/cli";
 import { ISSUE_TYPES, getIssueTypeMeta } from "@/lib/issue-types";
-import { humanizeStatus, laneAccent } from "@/lib/lanes";
+import { deriveLanes, humanizeStatus, laneAccent } from "@/lib/lanes";
 import { cn, isDoltProject } from "@/lib/utils";
 import type { Bead, WorktreeStatus } from "@/types";
 
@@ -113,6 +114,19 @@ export function BeadDetail({
 
   const isReadOnly = !projectPath;
   const isDolt = projectPath ? isDoltProject(projectPath) : false;
+
+  /**
+   * Options for the editable status control: the board's own lanes, plus
+   * this bead's raw status when it sits outside them. Hardcoding bd's
+   * four native statuses here left a lifecycle bead like `ready` with no
+   * matching option, so the control displayed the wrong status.
+   */
+  const configuredLanes = useLanes();
+  const statusOptions = useMemo(
+    () => deriveLanes([{ status: bead.status }], configuredLanes),
+    [bead.status, configuredLanes],
+  );
+
   const typeMeta = getIssueTypeMeta(bead.issue_type);
   const TypeIcon = typeMeta.icon;
 
@@ -358,12 +372,14 @@ export function BeadDetail({
                 <select
                   value={bead.status}
                   onChange={handleStatusChange}
+                  aria-label="Status"
                   className="bg-transparent border-none text-sm text-t-tertiary cursor-pointer hover:text-t-secondary focus:outline-none appearance-none"
                 >
-                  <option value="open">Open</option>
-                  <option value="in_progress">In Progress</option>
-                  <option value="inreview">In Review</option>
-                  <option value="closed">Closed</option>
+                  {statusOptions.map((lane) => (
+                    <option key={lane.status} value={lane.status}>
+                      {lane.title}
+                    </option>
+                  ))}
                 </select>
               )}
             </span>
