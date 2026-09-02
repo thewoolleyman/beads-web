@@ -186,7 +186,7 @@ export default function KanbanBoard() {
     openBead,
     handleDetailOpenChange,
     navigateToBead,
-  } = useBeadDetail(beads);
+  } = useBeadDetail(projectId, beads, router, searchParams);
 
   // Ref for search input (keyboard navigation)
   const searchInputRef = useRef<HTMLInputElement>(null);
