@@ -17,6 +17,7 @@ import {
 import { Input } from '@/components/ui/input';
 import { ISSUE_TYPES, getIssueTypeMeta } from '@/lib/issue-types';
 import type { IssueTypeFilter } from '@/lib/issue-types';
+import type { Lane } from '@/lib/lanes';
 import { cn } from '@/lib/utils';
 import type { BeadStatus } from '@/types';
 
@@ -25,6 +26,11 @@ type SortField = 'ticket_number' | 'created_at';
 type SortDirection = 'asc' | 'desc';
 
 interface QuickFilterBarProps {
+  /**
+   * Board lanes, in board order. The status filter offers exactly these,
+   * so it can select any status the project actually uses.
+   */
+  lanes: Lane[];
   /** Issue type filter: all, epics, or tasks */
   typeFilter: TypeFilter;
   /** Callback when type filter changes */
@@ -80,18 +86,12 @@ const SORT_OPTIONS: { value: string; label: string; field: SortField; direction:
   { value: 'created_at_asc', label: 'Updated (Oldest)', field: 'created_at', direction: 'asc' },
 ];
 
-const STATUS_OPTIONS: { value: BeadStatus; label: string }[] = [
-  { value: 'open', label: 'Open' },
-  { value: 'in_progress', label: 'In Progress' },
-  { value: 'inreview', label: 'In Review' },
-  { value: 'closed', label: 'Closed' },
-];
-
 /**
  * QuickFilterBar provides quick access to common filter and sort operations
  * for the kanban board. Displays below the header as a horizontal bar.
  */
 export function QuickFilterBar({
+  lanes,
   typeFilter,
   onTypeFilterChange,
   todayOnly,
@@ -324,14 +324,14 @@ export function QuickFilterBar({
         <DropdownMenuContent align="end" className="w-56 bg-surface-raised border-b-default">
           <DropdownMenuLabel className="text-t-tertiary">Status</DropdownMenuLabel>
           <DropdownMenuSeparator className="bg-surface-overlay" />
-          {STATUS_OPTIONS.map((option) => (
+          {lanes.map((lane) => (
             <DropdownMenuCheckboxItem
-              key={option.value}
-              checked={statuses.includes(option.value)}
-              onCheckedChange={() => onStatusToggle(option.value)}
+              key={lane.status}
+              checked={statuses.includes(lane.status)}
+              onCheckedChange={() => onStatusToggle(lane.status)}
               className="text-t-secondary focus:bg-surface-overlay focus:text-t-primary"
             >
-              {option.label}
+              {lane.title}
             </DropdownMenuCheckboxItem>
           ))}
 
