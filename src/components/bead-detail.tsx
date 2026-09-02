@@ -27,12 +27,11 @@ import { beadHref } from "@/lib/bead-link";
 import {
   formatBeadId,
   formatShortDate,
-  formatStatus,
   formatWorktreePath,
-  getStatusDotColor,
 } from "@/lib/bead-utils";
 import { updateTitle, updateDescription, updateStatus as cliUpdateStatus } from "@/lib/cli";
 import { ISSUE_TYPES, getIssueTypeMeta } from "@/lib/issue-types";
+import { humanizeStatus, laneAccent } from "@/lib/lanes";
 import { cn, isDoltProject } from "@/lib/utils";
 import type { Bead, WorktreeStatus } from "@/types";
 
@@ -347,9 +346,14 @@ export function BeadDetail({
             </span>
             <span className="text-t-faint" aria-hidden="true">•</span>
             <span className="flex items-center gap-1.5">
-              <Circle className={cn("size-2 fill-current", getStatusDotColor(bead.status))} aria-hidden="true" />
+              <Circle
+                className="size-2 fill-current"
+                style={{ color: laneAccent(bead.status).color }}
+                data-status-dot={bead.status}
+                aria-hidden="true"
+              />
               {isReadOnly ? (
-                <span>{formatStatus(bead.status)}</span>
+                <span>{humanizeStatus(bead.status)}</span>
               ) : (
                 <select
                   value={bead.status}
@@ -471,7 +475,9 @@ export function BeadDetail({
                       )}
                     >
                       <Circle
-                        className={cn("size-2 flex-shrink-0 fill-current", getStatusDotColor(related.status))}
+                        className="size-2 flex-shrink-0 fill-current"
+                        style={{ color: laneAccent(related.status).color }}
+                        data-status-dot={related.status}
                         aria-hidden="true"
                       />
                       <span className="text-[10px] font-mono text-t-muted flex-shrink-0">
@@ -484,7 +490,7 @@ export function BeadDetail({
                         {related.title}
                       </span>
                       <Badge variant="outline" size="xs" className="flex-shrink-0">
-                        {formatStatus(related.status)}
+                        {humanizeStatus(related.status)}
                       </Badge>
                     </button>
                   ))}

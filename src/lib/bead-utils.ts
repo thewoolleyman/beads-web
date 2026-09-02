@@ -5,7 +5,6 @@
  * and subtask-list components.
  */
 
-import type { BeadStatus } from "@/types";
 
 /**
  * Format bead ID for display, preserving the workspace prefix.
@@ -27,41 +26,12 @@ export function formatBeadId(id: string, maxLen = 6): string {
   return `${prefix}-${shortId}`;
 }
 
-/**
- * Format status for display (e.g., "in_progress" -> "In Progress")
+/*
+ * Status display helpers used to live here as `formatStatus` and
+ * `getStatusDotColor`, folding every status onto bd's four native ones.
+ * Statuses are free-form per-tenant lifecycle strings, so display now
+ * goes through `humanizeStatus` and `laneAccent` in `@/lib/lanes`.
  */
-export function formatStatus(status: BeadStatus): string {
-  switch (status) {
-    case "open":
-      return "Open";
-    case "in_progress":
-      return "In Progress";
-    case "inreview":
-      return "In Review";
-    case "closed":
-      return "Closed";
-    default:
-      return status;
-  }
-}
-
-/**
- * Get Tailwind color class for status indicator dot
- */
-export function getStatusDotColor(status: BeadStatus): string {
-  switch (status) {
-    case "open":
-      return "text-status-open";
-    case "in_progress":
-      return "text-status-progress";
-    case "inreview":
-      return "text-status-review";
-    case "closed":
-      return "text-status-closed";
-    default:
-      return "text-t-tertiary";
-  }
-}
 
 /**
  * Format date for short display (e.g., "Jan 23, 2025")

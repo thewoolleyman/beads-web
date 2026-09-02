@@ -1,11 +1,10 @@
 import { describe, it, expect } from 'vitest';
 
+import * as beadUtils from '@/lib/bead-utils';
 import {
   formatBeadId,
-  formatStatus,
   formatShortDate,
   formatWorktreePath,
-  getStatusDotColor,
   truncate,
   isBlocked,
 } from '@/lib/bead-utils';
@@ -37,26 +36,11 @@ describe('formatBeadId', () => {
   });
 });
 
-describe('formatStatus', () => {
-  it('formats known statuses', () => {
-    expect(formatStatus('open')).toBe('Open');
-    expect(formatStatus('in_progress')).toBe('In Progress');
-    expect(formatStatus('inreview')).toBe('In Review');
-    expect(formatStatus('closed')).toBe('Closed');
-  });
-
-  it('returns an unlisted status as-is', () => {
-    expect(formatStatus('unknown')).toBe('unknown');
-    expect(formatStatus('pending-approval')).toBe('pending-approval');
-  });
-});
-
-describe('getStatusDotColor', () => {
-  it('returns correct color classes', () => {
-    expect(getStatusDotColor('open')).toContain('status-open');
-    expect(getStatusDotColor('in_progress')).toContain('status-progress');
-    expect(getStatusDotColor('inreview')).toContain('status-review');
-    expect(getStatusDotColor('closed')).toContain('status-closed');
+describe('native-status display helpers', () => {
+  it('are gone — raw statuses are humanized via @/lib/lanes instead', () => {
+    const exported = Object.keys(beadUtils);
+    expect(exported).not.toContain('formatStatus');
+    expect(exported).not.toContain('getStatusDotColor');
   });
 });
 
