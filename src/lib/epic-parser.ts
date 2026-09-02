@@ -136,7 +136,10 @@ export function computeEpicProgress(epic: Epic, allBeads: Bead[]): EpicProgress 
 
   // Count statuses
   const completed = children.filter((c) => c.status === 'closed').length;
-  const inProgress = children.filter((c) => c.status === 'in_progress').length;
+  // livespec tenants use 'active'; bd's native lifecycle uses 'in_progress'
+  const inProgress = children.filter(
+    (c) => c.status === 'active' || c.status === 'in_progress'
+  ).length;
 
   // Count blocked children (those with unresolved deps)
   const blocked = children.filter((child) => {
