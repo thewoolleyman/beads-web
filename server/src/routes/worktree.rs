@@ -10,6 +10,8 @@ use serde::{Deserialize, Serialize};
 use std::fs::{self, OpenOptions};
 use std::io::Write;
 use std::path::Path;
+use std::sync::Mutex;
+use std::time::{Duration, Instant};
 use tokio::process::Command;
 
 use super::validate_path_security;
@@ -642,7 +644,7 @@ pub struct PrInfo {
 }
 
 /// Rate limit information.
-#[derive(Serialize)]
+#[derive(Serialize, Clone, Debug, PartialEq)]
 pub struct RateLimitInfo {
     /// Remaining API calls.
     pub remaining: i32,
@@ -702,8 +704,16 @@ pub async fn pr_status(Query(params): Query<PrStatusParams>) -> impl IntoRespons
         false
     };
 
-    // Get rate limit info (before PR status to avoid using up calls)
-    let rate_limit = get_rate_limit(&params.repo_path).await;
+    // Get rate limit info (before PR status to avoid using up calls).
+    // Only a pushed branch can need a GitHub call, so an unpushed or remote-less
+    // bead reports the reading as unknown instead of spawning `gh`; the board polls
+    // this endpoint once per card every 30 s, so an unconditional call ran `gh` once
+    // per card per poll. The reading itself is account-wide and cached briefly.
+    let rate_limit = if branch_pushed {
+        cached_rate_limit(&params.repo_path).await
+    } else {
+        unknown_rate_limit()
+    };
 
     // Get PR info if branch is pushed
     let pr = if branch_pushed {
@@ -1306,6 +1316,48 @@ async fn check_branch_pushed(repo_path: &str, branch: &str) -> bool {
     }
 }
 
+/// How long one GitHub rate-limit reading is reused across pr-status calls.
+const RATE_LIMIT_CACHE_TTL: Duration = Duration::from_secs(60);
+
+/// The last rate-limit reading and when it was taken. The reading is per GitHub
+/// account, not per repository, so one process-wide entry serves every project.
+static RATE_LIMIT_CACHE: Mutex<Option<(Instant, RateLimitInfo)>> = Mutex::new(None);
+
+/// The reading reported when no GitHub call was made or the call failed.
+fn unknown_rate_limit() -> RateLimitInfo {
+    RateLimitInfo {
+        remaining: -1, // Unknown
+        limit: 5000,
+        reset_at: String::new(),
+    }
+}
+
+/// A cached reading that is still younger than `ttl` at `now`, if there is one.
+fn fresh_reading(
+    entry: Option<&(Instant, RateLimitInfo)>,
+    now: Instant,
+    ttl: Duration,
+) -> Option<RateLimitInfo> {
+    entry
+        .filter(|(taken, _)| now.saturating_duration_since(*taken) < ttl)
+        .map(|(_, info)| info.clone())
+}
+
+/// The rate-limit reading, from the cache when it is fresh, else from `gh`.
+async fn cached_rate_limit(repo_path: &str) -> RateLimitInfo {
+    let cached = {
+        let guard = RATE_LIMIT_CACHE.lock().unwrap_or_else(|e| e.into_inner());
+        fresh_reading(guard.as_ref(), Instant::now(), RATE_LIMIT_CACHE_TTL)
+    };
+    if let Some(info) = cached {
+        return info;
+    }
+    let info = get_rate_limit(repo_path).await;
+    let mut guard = RATE_LIMIT_CACHE.lock().unwrap_or_else(|e| e.into_inner());
+    *guard = Some((Instant::now(), info.clone()));
+    info
+}
+
 /// Get rate limit information from GitHub API.
 async fn get_rate_limit(repo_path: &str) -> RateLimitInfo {
     let output = Command::new("gh")
@@ -1334,11 +1386,7 @@ async fn get_rate_limit(repo_path: &str) -> RateLimitInfo {
     }
 
     // Default fallback
-    RateLimitInfo {
-        remaining: -1, // Unknown
-        limit: 5000,
-        reset_at: String::new(),
-    }
+    unknown_rate_limit()
 }
 
 /// Get PR information for a branch.
@@ -1730,6 +1778,25 @@ async fn rebase_single_worktree(worktree_path: &str, bead_id: &str) -> RebaseSib
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn test_unknown_rate_limit_reports_unknown_remaining() {
+        let info = unknown_rate_limit();
+        assert_eq!(info.remaining, -1);
+        assert_eq!(info.limit, 5000);
+        assert!(info.reset_at.is_empty());
+    }
+
+    #[test]
+    fn test_fresh_reading_reuses_a_young_entry_and_drops_an_old_one() {
+        let taken = Instant::now();
+        let info = RateLimitInfo { remaining: 4321, limit: 5000, reset_at: "r".to_string() };
+        let entry = (taken, info.clone());
+        let ttl = Duration::from_secs(60);
+        assert_eq!(fresh_reading(Some(&entry), taken + Duration::from_secs(59), ttl), Some(info));
+        assert_eq!(fresh_reading(Some(&entry), taken + Duration::from_secs(60), ttl), None);
+        assert_eq!(fresh_reading(None, taken, ttl), None);
+    }
 
     #[test]
     fn test_extract_bead_id() {
