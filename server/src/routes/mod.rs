@@ -21,6 +21,7 @@ pub use watch::watch_beads;
 
 use axum::{response::IntoResponse, Json};
 use directories::UserDirs;
+use tower_http::compression::CompressionLayer;
 use serde::Serialize;
 use std::path::{Path, PathBuf};
 use std::sync::OnceLock;
@@ -174,6 +175,16 @@ pub fn validate_path_security(path: &Path) -> Result<(), String> {
     Ok(())
 }
 
+/// Response compression for the whole router: gzip or brotli, whichever the
+/// client accepts.
+///
+/// The default predicate leaves `text/event-stream` (the `/api/watch/beads`
+/// SSE stream), gRPC, images and responses under 32 bytes uncompressed, so an
+/// encoder never buffers a live event stream.
+pub fn compression_layer() -> CompressionLayer {
+    CompressionLayer::new().gzip(true).br(true)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -205,5 +216,90 @@ mod tests {
             let err_msg = result.unwrap_err();
             assert!(err_msg.contains("denied") || err_msg.contains("Invalid"));
         }
+    }
+
+    // ── compression_layer ───────────────────────────────────────────────
+
+    /// Serves `app` on an ephemeral loopback port and returns its base URL.
+    async fn serve(app: axum::Router) -> String {
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let addr = listener.local_addr().unwrap();
+        tokio::spawn(async move {
+            axum::serve(listener, app).await.unwrap();
+        });
+        format!("http://{}", addr)
+    }
+
+    fn compression_test_app() -> axum::Router {
+        use axum::response::sse::{Event, KeepAlive, Sse};
+        use axum::routing::get;
+        use futures::stream;
+        use std::convert::Infallible;
+
+        axum::Router::new()
+            .route(
+                "/json",
+                get(|| async { Json(serde_json::json!({ "beads": vec!["x".repeat(64); 64] })) }),
+            )
+            .route(
+                "/sse",
+                get(|| async {
+                    let events = stream::iter(vec![Ok::<_, Infallible>(
+                        Event::default().data("connected"),
+                    )]);
+                    Sse::new(events).keep_alive(KeepAlive::default())
+                }),
+            )
+            .layer(compression_layer())
+    }
+
+    #[tokio::test]
+    async fn test_compression_layer_gzips_json_when_accepted() {
+        let base = serve(compression_test_app()).await;
+        let client = reqwest::Client::new();
+
+        let gz = client
+            .get(format!("{}/json", base))
+            .header("accept-encoding", "gzip")
+            .send()
+            .await
+            .unwrap();
+        assert_eq!(gz.headers().get("content-encoding").unwrap(), "gzip");
+        let gz_len = gz.bytes().await.unwrap().len();
+
+        let br = client
+            .get(format!("{}/json", base))
+            .header("accept-encoding", "br")
+            .send()
+            .await
+            .unwrap();
+        assert_eq!(br.headers().get("content-encoding").unwrap(), "br");
+
+        let plain = client.get(format!("{}/json", base)).send().await.unwrap();
+        assert!(plain.headers().get("content-encoding").is_none());
+        let plain_len = plain.bytes().await.unwrap().len();
+        assert!(gz_len < plain_len, "gzip {} should be smaller than {}", gz_len, plain_len);
+    }
+
+    #[tokio::test]
+    async fn test_compression_layer_leaves_sse_stream_uncompressed() {
+        let base = serve(compression_test_app()).await;
+        let res = reqwest::Client::new()
+            .get(format!("{}/sse", base))
+            .header("accept-encoding", "gzip, br")
+            .send()
+            .await
+            .unwrap();
+        assert!(res
+            .headers()
+            .get("content-type")
+            .unwrap()
+            .to_str()
+            .unwrap()
+            .starts_with("text/event-stream"));
+        assert!(res.headers().get("content-encoding").is_none());
+        let mut res = res;
+        let first = res.chunk().await.unwrap().unwrap();
+        assert!(String::from_utf8_lossy(&first).contains("data: connected"));
     }
 }

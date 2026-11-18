@@ -13,7 +13,7 @@ import { Progress } from "@/components/ui/progress";
 import { useTheme } from "@/hooks/use-theme";
 import * as api from "@/lib/api";
 import { beadHref, isModifiedClick } from "@/lib/bead-link";
-import { formatBeadId, isBlocked, truncate } from "@/lib/bead-utils";
+import { commentCount as countComments, formatBeadId, isBlocked, truncate } from "@/lib/bead-utils";
 import { closeBead } from "@/lib/cli";
 import { computeEpicProgress } from "@/lib/epic-parser";
 import { cn, isDoltProject } from "@/lib/utils";
@@ -158,7 +158,7 @@ export function EpicCard({
     ? Math.round((progress.completed / progress.total) * 100)
     : 0;
 
-  const commentCount = (epic.comments ?? []).length;
+  const commentCount = countComments(epic);
 
   // Show Close Epic button when all children are complete and epic is in review
   const canCloseEpic = progressPercentage === 100 && epic.status === 'inreview';

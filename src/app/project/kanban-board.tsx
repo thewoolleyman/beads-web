@@ -6,10 +6,9 @@ import { useSearchParams, useRouter } from "next/navigation";
 
 import { ArrowLeft, EllipsisVertical } from "lucide-react";
 
-import { ActivityTimeline } from "@/components/activity-timeline";
 import { AgentsPanel } from "@/components/agents-panel";
+import { BeadCommentsSection } from "@/components/bead-comments-section";
 import { BeadDetail } from "@/components/bead-detail";
-import { CommentList } from "@/components/comment-list";
 import { CreateBeadDialog } from "@/components/create-bead-dialog";
 import { ErrorBoundary } from "@/components/error-boundary";
 import { KanbanColumn } from "@/components/kanban-column";
@@ -403,15 +402,10 @@ export default function KanbanBoard() {
           onChildClick={openBead}
           onUpdate={refreshBeads}
         >
-          <CommentList
-            comments={detailBead.comments}
-            beadId={detailBead.id}
+          <BeadCommentsSection
+            bead={detailBead}
             projectPath={project?.path ?? ""}
             onCommentAdded={refreshBeads}
-          />
-          <ActivityTimeline
-            bead={detailBead}
-            comments={detailBead.comments}
             childBeads={(detailBead.children || [])
               .map(id => beads.find(b => b.id === id))
               .filter((b): b is Bead => !!b)}

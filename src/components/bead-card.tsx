@@ -6,7 +6,7 @@ import { CopyableText } from "@/components/copyable-text";
 import { Badge } from "@/components/ui/badge";
 import { useTheme } from "@/hooks/use-theme";
 import { beadHref, isModifiedClick } from "@/lib/bead-link";
-import { formatBeadId, formatWorktreePath, isBlocked, truncate } from "@/lib/bead-utils";
+import { commentCount as countComments, formatBeadId, formatWorktreePath, isBlocked, truncate } from "@/lib/bead-utils";
 import { getIssueTypeMeta } from "@/lib/issue-types";
 import { cn } from "@/lib/utils";
 import type { Bead, WorktreeStatus, PRStatus, StatusBadgeInfo } from "@/types";
@@ -154,7 +154,7 @@ function getStatusBadgeClasses(variant: StatusBadgeInfo['variant']): string {
 export function BeadCard({ bead, allBeads, projectId, ticketNumber, worktreeStatus, prStatus, isSelected = false, onSelect }: BeadCardProps) {
   const { layout } = useTheme();
   const blocked = isBlocked(bead, allBeads);
-  const commentCount = (bead.comments ?? []).length;
+  const commentCount = countComments(bead);
   const relatedCount = (bead.relates_to ?? []).length;
 
   // Issue-type metadata (icon + theme color) from the shared source of truth

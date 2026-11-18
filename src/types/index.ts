@@ -96,7 +96,13 @@ export interface Bead {
   owner: string;
   created_at: string;
   updated_at: string;
-  comments: Comment[];
+  /**
+   * Inline comments. The board list no longer carries them (it sends
+   * `comment_count`); the detail panel fetches one bead's comments on demand.
+   */
+  comments?: Comment[];
+  /** Number of comments on this bead, as counted by the server. */
+  comment_count?: number;
   // Epic support fields
   parent_id?: string;         // ID of parent epic (for child tasks)
   children?: string[];        // IDs of child tasks (for epics)

@@ -99,14 +99,25 @@ impl DoltManager {
         Ok(databases)
     }
 
-    /// Reads beads (issues + comments + dependencies) from a specific Dolt database.
-    pub async fn read_beads(&self, db_name: &str) -> Result<Vec<Bead>, DoltError> {
+    /// Reads beads (issues + dependencies + a per-bead comment count) from a
+    /// specific Dolt database. Comment bodies are joined only when
+    /// `include_comments` is set.
+    pub async fn read_beads(&self, db_name: &str, include_comments: bool) -> Result<Vec<Bead>, DoltError> {
         let mut conn = self.pool.get_conn().await
             .map_err(|e| DoltError::ConnectionFailed(e.to_string()))?;
-        let beads = read_beads_from_conn(&mut conn, db_name).await?;
+        let beads = read_beads_from_conn(&mut conn, db_name, include_comments).await?;
         self.available.store(true, Ordering::Relaxed);
         info!("Read {} beads from Dolt SQL (db: {})", beads.len(), db_name);
         Ok(beads)
+    }
+
+    /// Reads the comments of ONE bead from a specific Dolt database.
+    pub async fn read_comments(&self, db_name: &str, issue_id: &str) -> Result<Vec<Comment>, DoltError> {
+        let mut conn = self.pool.get_conn().await
+            .map_err(|e| DoltError::ConnectionFailed(e.to_string()))?;
+        let comments = read_comments_from_conn(&mut conn, db_name, issue_id).await?;
+        self.available.store(true, Ordering::Relaxed);
+        Ok(comments)
     }
 
     /// Creates a new bead in a Dolt database and commits the change.
@@ -293,7 +304,40 @@ impl DoltManager {
 
 /// Reads beads from a Dolt server on a specific port.
 /// Creates a temporary connection pool to the given port, reads data, then drops it.
-pub async fn read_beads_on_port(port: u16, db_name: &str) -> Result<Vec<Bead>, DoltError> {
+pub async fn read_beads_on_port(port: u16, db_name: &str, include_comments: bool) -> Result<Vec<Bead>, DoltError> {
+    let pool = port_pool(port);
+    let mut conn = pool.get_conn().await
+        .map_err(|e| DoltError::ConnectionFailed(e.to_string()))?;
+
+    let result = read_beads_from_conn(&mut conn, db_name, include_comments).await;
+
+    drop(conn);
+    if let Err(e) = pool.disconnect().await {
+        tracing::warn!("Failed to disconnect temporary pool (port {}): {}", port, e);
+    }
+
+    let beads = result?;
+    info!("Read {} beads from per-project Dolt SQL (port: {}, db: {})", beads.len(), port, db_name);
+    Ok(beads)
+}
+
+/// Reads the comments of ONE bead from a Dolt server on a specific port.
+pub async fn read_comments_on_port(port: u16, db_name: &str, issue_id: &str) -> Result<Vec<Comment>, DoltError> {
+    let pool = port_pool(port);
+    let mut conn = pool.get_conn().await
+        .map_err(|e| DoltError::ConnectionFailed(e.to_string()))?;
+
+    let result = read_comments_from_conn(&mut conn, db_name, issue_id).await;
+
+    drop(conn);
+    if let Err(e) = pool.disconnect().await {
+        tracing::warn!("Failed to disconnect temporary pool (port {}): {}", port, e);
+    }
+    result
+}
+
+/// A small temporary connection pool to a per-project Dolt server.
+fn port_pool(port: u16) -> Pool {
     let pool_opts = PoolOpts::default()
         .with_constraints(PoolConstraints::new(0, 2).unwrap());
 
@@ -304,20 +348,7 @@ pub async fn read_beads_on_port(port: u16, db_name: &str) -> Result<Vec<Bead>, D
         .pool_opts(pool_opts)
         .into();
 
-    let pool = Pool::new(opts);
-    let mut conn = pool.get_conn().await
-        .map_err(|e| DoltError::ConnectionFailed(e.to_string()))?;
-
-    let result = read_beads_from_conn(&mut conn, db_name).await;
-
-    drop(conn);
-    if let Err(e) = pool.disconnect().await {
-        tracing::warn!("Failed to disconnect temporary pool (port {}): {}", port, e);
-    }
-
-    let beads = result?;
-    info!("Read {} beads from per-project Dolt SQL (port: {}, db: {})", beads.len(), port, db_name);
-    Ok(beads)
+    Pool::new(opts)
 }
 
 /// Discover the beads database name by connecting to a Dolt server and looking
@@ -377,13 +408,30 @@ pub async fn discover_database_on_port(port: u16) -> Result<String, DoltError> {
 
 /// Shared logic for reading beads from a Dolt MySQL connection.
 ///
-/// Reads issues, comments, and dependencies from the given database,
-/// then merges them into a single `Vec<Bead>`.
+/// Reads issues, a per-bead comment count, and dependencies from the given
+/// database, then merges them into a single `Vec<Bead>`. Comment bodies are
+/// joined onto every bead only when `include_comments` is set: on a large
+/// tenant they are almost all of the bytes, and the board needs only the
+/// count (the detail panel fetches one bead's comments on demand).
 async fn read_beads_from_conn(
     conn: &mut mysql_async::Conn,
     db_name: &str,
+    include_comments: bool,
 ) -> Result<Vec<Bead>, DoltError> {
-    // Check database exists
+    ensure_database_exists(conn, db_name).await?;
+
+    let beads = query_issues(conn, db_name).await?;
+    let mut beads = if include_comments {
+        merge_comments(conn, db_name, beads).await?
+    } else {
+        merge_comment_counts(conn, db_name, beads).await?
+    };
+    merge_dependencies(conn, db_name, &mut beads).await?;
+    Ok(beads)
+}
+
+/// Fails with `DatabaseNotFound` when `db_name` does not exist on the server.
+async fn ensure_database_exists(conn: &mut mysql_async::Conn, db_name: &str) -> Result<(), DoltError> {
     let db_exists: Option<Row> = conn.exec_first(
         "SELECT SCHEMA_NAME FROM information_schema.SCHEMATA WHERE SCHEMA_NAME = :db",
         mysql_async::params! { "db" => db_name },
@@ -392,10 +440,60 @@ async fn read_beads_from_conn(
     if db_exists.is_none() {
         return Err(DoltError::DatabaseNotFound(db_name.to_string()));
     }
+    Ok(())
+}
 
-    let beads = query_issues(conn, db_name).await?;
-    let mut beads = merge_comments(conn, db_name, beads).await?;
-    merge_dependencies(conn, db_name, &mut beads).await?;
+/// Reads the comments of ONE bead, oldest first.
+async fn read_comments_from_conn(
+    conn: &mut mysql_async::Conn,
+    db_name: &str,
+    issue_id: &str,
+) -> Result<Vec<Comment>, DoltError> {
+    ensure_database_exists(conn, db_name).await?;
+    let query = format!(
+        "SELECT id, issue_id, author, text, \
+         DATE_FORMAT(created_at, '%Y-%m-%dT%H:%i:%sZ') AS created_at \
+         FROM `{}`.comments WHERE issue_id = :issue_id ORDER BY created_at, id",
+        db_name
+    );
+    let rows: Vec<Row> = conn.exec(&query, mysql_async::params! { "issue_id" => issue_id })
+        .await
+        .map_err(|e| DoltError::QueryFailed(format!("comments: {}", e)))?;
+    Ok(rows.iter().map(comment_from_row).collect())
+}
+
+fn comment_from_row(row: &Row) -> Comment {
+    Comment {
+        id: get_str(row, "id"),
+        issue_id: get_str(row, "issue_id"),
+        author: get_str(row, "author"),
+        text: get_str(row, "text"),
+        created_at: get_str(row, "created_at"),
+    }
+}
+
+/// Counts comments per bead in SQL (never loading a body) and sets
+/// `comment_count` on every bead, zero included.
+async fn merge_comment_counts(
+    conn: &mut mysql_async::Conn,
+    db_name: &str,
+    mut beads: Vec<Bead>,
+) -> Result<Vec<Bead>, DoltError> {
+    let query = format!(
+        "SELECT issue_id, COUNT(*) AS n FROM `{}`.comments GROUP BY issue_id",
+        db_name
+    );
+    let rows: Vec<Row> = conn.query(&query).await
+        .map_err(|e| DoltError::QueryFailed(format!("comment counts: {}", e)))?;
+
+    let mut counts: HashMap<String, i64> = HashMap::new();
+    for row in &rows {
+        let n = row.get::<Option<i64>, _>("n").flatten().unwrap_or(0);
+        counts.insert(get_str(row, "issue_id"), n);
+    }
+    for bead in &mut beads {
+        bead.comment_count = Some(counts.get(&bead.id).copied().unwrap_or(0));
+    }
     Ok(beads)
 }
 
@@ -440,7 +538,7 @@ async fn query_issues(conn: &mut mysql_async::Conn, db_name: &str) -> Result<Vec
         design: get_opt_str(row, "design"),
         notes: get_opt_str(row, "notes"),
         parent_id: None, children: None, deps: None,
-        relates_to: None, comments: None, dependencies: None,
+        relates_to: None, comments: None, comment_count: None, dependencies: None,
     }).collect())
 }
 
@@ -461,17 +559,13 @@ async fn merge_comments(
 
     let mut map: HashMap<String, Vec<Comment>> = HashMap::new();
     for row in &rows {
-        let issue_id = get_str(row, "issue_id");
-        map.entry(issue_id.clone()).or_default().push(Comment {
-            id: get_str(row, "id"),
-            issue_id,
-            author: get_str(row, "author"),
-            text: get_str(row, "text"),
-            created_at: get_str(row, "created_at"),
-        });
+        let comment = comment_from_row(row);
+        map.entry(comment.issue_id.clone()).or_default().push(comment);
     }
     for bead in &mut beads {
-        if let Some(comments) = map.remove(&bead.id) {
+        let comments = map.remove(&bead.id).unwrap_or_default();
+        bead.comment_count = Some(comments.len() as i64);
+        if !comments.is_empty() {
             bead.comments = Some(comments);
         }
     }
