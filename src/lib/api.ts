@@ -4,8 +4,8 @@
  */
 
 import { apiUrl } from '@/lib/api-base';
-import { BeadsResponseSchema, PRStatusSchema, WorktreeStatusSchema } from '@/lib/api-schemas';
-import type { Project, Tag, Bead, WorktreeStatus, WorktreeEntry, PRStatus, PRFilesResponse, MemoryEntry, Agent, AgentModel } from '@/types';
+import { BeadCommentsResponseSchema, BeadsResponseSchema, PRStatusSchema, WorktreeStatusSchema } from '@/lib/api-schemas';
+import type { Project, Tag, Bead, Comment, WorktreeStatus, WorktreeEntry, PRStatus, PRFilesResponse, MemoryEntry, Agent, AgentModel } from '@/types';
 
 /**
  * Input for creating a new project
@@ -160,6 +160,16 @@ export const beads = {
     );
     BeadsResponseSchema.parse(data);
     return data;
+  },
+
+  /** One bead's comments, oldest first (the list carries only comment_count). */
+  comments: async (path: string, id: string): Promise<Comment[]> => {
+    const params = new URLSearchParams({ path, id });
+    const data = await fetchApi<{ comments: Comment[]; source?: string }>(
+      `/api/beads/comments?${params}`
+    );
+    BeadCommentsResponseSchema.parse(data);
+    return data.comments;
   },
 
   create: (data: CreateBeadInput) => fetchApi<{ id: string }>('/api/beads/create', {

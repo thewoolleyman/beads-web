@@ -72,6 +72,19 @@ export function truncate(text: string, maxLength: number): string {
 }
 
 /**
+ * Number of comments on a bead.
+ *
+ * The board list carries a server-side `comment_count` and no comment
+ * bodies; inline `comments` are only a fallback for data that predates it.
+ */
+export function commentCount(bead: {
+  comment_count?: number | null;
+  comments?: ReadonlyArray<unknown> | null;
+}): number {
+  return bead.comment_count ?? bead.comments?.length ?? 0;
+}
+
+/**
  * Detect if bead is blocked by checking for unresolved dependencies.
  *
  * A bead is blocked when at least one of its dependencies (resolved

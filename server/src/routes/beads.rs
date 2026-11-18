@@ -105,6 +105,22 @@ pub struct BeadsParams {
     /// Optional ISO 8601 timestamp — only return beads updated after this time.
     /// Used for incremental polling (subsequent fetches after initial full load).
     pub updated_after: Option<String>,
+    /// Opt in to inlining every bead's full comment bodies (`include_comments=true`).
+    ///
+    /// Off by default: on a large tenant the comment bodies are almost all of
+    /// the response, while the board needs only `comment_count`. The detail
+    /// panel reads one bead's comments from `/api/beads/comments`.
+    #[serde(default)]
+    pub include_comments: Option<bool>,
+}
+
+/// Query parameters for the per-bead comments endpoint.
+#[derive(Debug, Deserialize)]
+pub struct BeadCommentsParams {
+    /// The project path, or `dolt://dbname`
+    pub path: String,
+    /// The bead whose comments to return
+    pub id: String,
 }
 
 /// A dependency relationship in the JSONL file (old format).
@@ -148,8 +164,12 @@ pub struct Bead {
     pub closed_at: Option<String>,
     #[serde(default)]
     pub close_reason: Option<String>,
-    #[serde(default)]
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub comments: Option<Vec<Comment>>,
+    /// Number of comments on this bead. Set on every bead a read returns,
+    /// whether or not the comment bodies themselves are included.
+    #[serde(default)]
+    pub comment_count: Option<i64>,
     #[serde(default, alias = "parent")]
     pub parent_id: Option<String>,
     #[serde(default)]
@@ -354,11 +374,34 @@ fn upsert_counts_cache(
     }
 }
 
+/// SQL that counts comments per bead without reading a single body.
+const COMMENT_COUNTS_SQL: &str = "SELECT issue_id, COUNT(*) AS n FROM comments GROUP BY issue_id";
+
+/// One row of [`COMMENT_COUNTS_SQL`].
+#[derive(Debug, Deserialize)]
+struct CommentCountRow {
+    issue_id: String,
+    n: i64,
+}
+
+/// Parses `bd sql --json` output of [`COMMENT_COUNTS_SQL`] into a map.
+fn parse_comment_counts(output: &str) -> Result<HashMap<String, i64>, String> {
+    let json_str = extract_json_array(output)?;
+    let rows: Vec<CommentCountRow> = serde_json::from_str(json_str)
+        .map_err(|e| format!("Failed to parse comment counts: {}", e))?;
+    Ok(rows.into_iter().map(|r| (r.issue_id, r.n)).collect())
+}
+
 /// Reads beads from the Dolt database via `bd` CLI.
 ///
-/// Calls `bd list --json` for issues and `bd sql` for comments,
-/// then merges them together.
-async fn read_beads_from_cli(project_path: &Path, updated_after: Option<&str>) -> Result<Vec<Bead>, String> {
+/// Calls `bd list --json` for issues. By default only a per-bead comment
+/// count is added, counted in SQL; with `include_comments` every comment
+/// body is read with `bd sql` and merged in.
+async fn read_beads_from_cli(
+    project_path: &Path,
+    updated_after: Option<&str>,
+    include_comments: bool,
+) -> Result<Vec<Bead>, String> {
     // Get beads, optionally filtered by updated_after
     let list_output = if let Some(since) = updated_after {
         let updated_flag = format!("--updated-after={}", since);
@@ -376,6 +419,11 @@ async fn read_beads_from_cli(project_path: &Path, updated_after: Option<&str>) -
     let json_str = extract_json_array(&list_output)?;
     let mut beads: Vec<Bead> = serde_json::from_str(json_str)
         .map_err(|e| format!("Failed to parse bd list output: {}", e))?;
+
+    if !include_comments {
+        merge_comment_counts_from_cli(project_path, &mut beads).await;
+        return Ok(beads);
+    }
 
     // Get all comments. Try `bd sql` first; on any failure (notably "not yet
     // supported in embedded mode" for JSONL-only projects), fall back to
@@ -411,11 +459,97 @@ async fn read_beads_from_cli(project_path: &Path, updated_after: Option<&str>) -
 
     for bead in &mut beads {
         if let Some(bead_comments) = comments_map.remove(&bead.id) {
+            bead.comment_count = Some(bead_comments.len() as i64);
             bead.comments = Some(bead_comments);
         }
     }
 
     Ok(beads)
+}
+
+/// Sets `comment_count` on beads read through the `bd` CLI.
+///
+/// Counts in SQL first. If `bd sql` is unavailable (embedded mode), keeps the
+/// `comment_count` that `bd list --json` itself reports; if that is missing
+/// too (older bd), counts the comments embedded in `.beads/issues.jsonl`.
+async fn merge_comment_counts_from_cli(project_path: &Path, beads: &mut [Bead]) {
+    let sql = run_bd(&["sql", COMMENT_COUNTS_SQL, "--json"], project_path).await;
+    match sql.and_then(|out| parse_comment_counts(&out)) {
+        Ok(counts) => {
+            for bead in beads.iter_mut() {
+                bead.comment_count = Some(counts.get(&bead.id).copied().unwrap_or(0));
+            }
+        }
+        Err(e) => {
+            tracing::info!("bd sql comment counts unavailable ({}); using bd list / JSONL counts", e);
+            if beads.iter().any(|b| b.comment_count.is_some()) {
+                return;
+            }
+            let mut comments_map: HashMap<String, Vec<Comment>> = HashMap::new();
+            load_comments_from_jsonl(project_path, &mut comments_map);
+            for bead in beads.iter_mut() {
+                let n = comments_map.get(&bead.id).map_or(0, |c| c.len() as i64);
+                bead.comment_count = Some(n);
+            }
+        }
+    }
+}
+
+/// Makes a bead list follow the response's comment policy.
+///
+/// Every bead gets a `comment_count` (derived from its inline comments when a
+/// reader did not count them), and unless `include_comments` is set the
+/// comment bodies are dropped so the list stays small.
+fn apply_comment_policy(beads: &mut [Bead], include_comments: bool) {
+    for bead in beads.iter_mut() {
+        if bead.comment_count.is_none() {
+            bead.comment_count = Some(bead.comments.as_ref().map_or(0, |c| c.len() as i64));
+        }
+        if !include_comments {
+            bead.comments = None;
+        }
+    }
+}
+
+/// The last step of every `/api/beads` read path: apply the comment policy,
+/// then derive the epic relationships.
+fn finish_beads(mut beads: Vec<Bead>, include_comments: bool) -> Vec<Bead> {
+    apply_comment_policy(&mut beads, include_comments);
+    post_process_beads(beads)
+}
+
+/// Whether `id` is a plausible bead id: letters, digits, `.`, `_`, `-`.
+///
+/// The per-bead comments endpoint interpolates the id into a `bd sql`
+/// statement, so anything else (quotes, spaces, semicolons) is refused.
+fn is_valid_bead_id(id: &str) -> bool {
+    !id.is_empty()
+        && id.len() <= 128
+        && id.chars().all(|c| c.is_ascii_alphanumeric() || matches!(c, '.' | '_' | '-'))
+}
+
+/// Reads ONE bead's comments through `bd sql`. `issue_id` must already have
+/// passed [`is_valid_bead_id`].
+async fn read_comments_from_cli(project_path: &Path, issue_id: &str) -> Result<Vec<Comment>, String> {
+    debug_assert!(is_valid_bead_id(issue_id));
+    let query = format!(
+        "SELECT * FROM comments WHERE issue_id = '{}' ORDER BY created_at, id",
+        issue_id
+    );
+    let output = run_bd(&["sql", &query, "--json"], project_path).await?;
+    let json_str = extract_json_array(&output)?;
+    serde_json::from_str::<Vec<Comment>>(json_str)
+        .map_err(|e| format!("Failed to parse comments from bd sql: {}", e))
+}
+
+/// Reads ONE bead's comments from the JSONL file.
+fn read_comments_from_jsonl(issues_path: &Path, issue_id: &str) -> Result<Vec<Comment>, String> {
+    let beads = read_beads_from_jsonl(issues_path)?;
+    Ok(beads
+        .into_iter()
+        .find(|b| b.id == issue_id)
+        .and_then(|b| b.comments)
+        .unwrap_or_default())
 }
 
 /// Returns `true` if a JSONL line is a non-issue record that should be skipped.
@@ -495,6 +629,7 @@ pub async fn read_beads(
 ) -> impl IntoResponse {
     // Normalize Windows backslashes to forward slashes
     let path = params.path.replace('\\', "/");
+    let include_comments = params.include_comments.unwrap_or(false);
 
     // Direct Dolt read for dolt:// paths (no filesystem needed)
     if let Some(db_name) = path.strip_prefix(DOLT_PATH_PREFIX) {
@@ -504,9 +639,9 @@ pub async fn read_beads(
                 Json(serde_json::json!({ "error": "Dolt server is not running" })),
             );
         }
-        return match dolt_manager.read_beads(db_name).await {
+        return match dolt_manager.read_beads(db_name, include_comments).await {
             Ok(beads) => {
-                let beads = post_process_beads(beads);
+                let beads = finish_beads(beads, include_comments);
                 upsert_counts_cache(&db, &path, "dolt-direct", &beads);
                 (StatusCode::OK, Json(serde_json::json!({ "beads": beads, "source": "dolt-direct" })))
             }
@@ -556,10 +691,10 @@ pub async fn read_beads(
 
             if let Some(db_name) = db_name {
                 tracing::info!("Trying per-project Dolt server on port {} for db {}", port, db_name);
-                match dolt::read_beads_on_port(port, &db_name).await {
+                match dolt::read_beads_on_port(port, &db_name, include_comments).await {
                     Ok(beads) => {
                         tracing::info!("Read {} beads from per-project Dolt (port {})", beads.len(), port);
-                        let beads = post_process_beads(beads);
+                        let beads = finish_beads(beads, include_comments);
                         upsert_counts_cache(&db, &path, "dolt-project", &beads);
                         return (StatusCode::OK, Json(serde_json::json!({ "beads": beads, "source": "dolt-project" })));
                     }
@@ -579,7 +714,7 @@ pub async fn read_beads(
     let (beads, source) = 'fallback: {
         if dolt_manager.is_available() {
             if let Some(db_name) = dolt::database_name_for_project(&project_path) {
-                match dolt_manager.read_beads(&db_name).await {
+                match dolt_manager.read_beads(&db_name, include_comments).await {
                     Ok(b) => break 'fallback (b, "dolt-central"),
                     Err(crate::dolt::DoltError::DatabaseNotFound(_)) => {
                         tracing::info!("Dolt database {} not found on SQL server, trying bd CLI", db_name);
@@ -593,7 +728,7 @@ pub async fn read_beads(
         }
 
         // Tier 2: Try bd CLI
-        match read_beads_from_cli(&project_path, params.updated_after.as_deref()).await {
+        match read_beads_from_cli(&project_path, params.updated_after.as_deref(), include_comments).await {
             Ok(b) => {
                 let mode = if params.updated_after.is_some() { "incremental" } else { "full" };
                 tracing::info!("Read {} beads from bd CLI for {} ({})", b.len(), path, mode);
@@ -623,9 +758,122 @@ pub async fn read_beads(
         }
     };
 
-    let beads = post_process_beads(beads);
+    let beads = finish_beads(beads, include_comments);
     upsert_counts_cache(&db, &path, source, &beads);
     (StatusCode::OK, Json(serde_json::json!({ "beads": beads, "source": source })))
+}
+
+/// GET /api/beads/comments?path=/path/to/project&id=<bead-id>
+/// GET /api/beads/comments?path=dolt://beads_dbname&id=<bead-id>
+///
+/// Returns ONE bead's comments, oldest first, as `{ "comments": [...] }`.
+/// The board list carries only `comment_count`; the detail panel calls this
+/// when a bead opens. Reads through the same tiers as [`read_beads`] and
+/// applies the same path-security validation.
+pub async fn read_bead_comments(
+    Extension(dolt_manager): Extension<Arc<DoltManager>>,
+    Query(params): Query<BeadCommentsParams>,
+) -> impl IntoResponse {
+    let path = params.path.replace('\\', "/");
+    let issue_id = params.id.trim();
+
+    if !is_valid_bead_id(issue_id) {
+        return (
+            StatusCode::BAD_REQUEST,
+            Json(serde_json::json!({ "error": "Invalid bead id" })),
+        );
+    }
+
+    let ok = |comments: Vec<Comment>, source: &str| {
+        (StatusCode::OK, Json(serde_json::json!({ "comments": comments, "source": source })))
+    };
+
+    if let Some(db_name) = path.strip_prefix(DOLT_PATH_PREFIX) {
+        if !dolt_manager.is_available() && !dolt_manager.check_server().await {
+            return (
+                StatusCode::SERVICE_UNAVAILABLE,
+                Json(serde_json::json!({ "error": "Dolt server is not running" })),
+            );
+        }
+        return match dolt_manager.read_comments(db_name, issue_id).await {
+            Ok(comments) => ok(comments, "dolt-direct"),
+            Err(e) => (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                Json(serde_json::json!({ "error": e.to_string() })),
+            ),
+        };
+    }
+
+    let project_path = PathBuf::from(&path);
+
+    // Security: Validate path is within allowed directories
+    if let Err(e) = validate_path_security(&project_path) {
+        return (
+            StatusCode::FORBIDDEN,
+            Json(serde_json::json!({ "error": e })),
+        );
+    }
+
+    let beads_dir = project_path.join(".beads");
+    if !beads_dir.exists() {
+        return (
+            StatusCode::NOT_FOUND,
+            Json(serde_json::json!({ "error": "No .beads directory found at the specified path" })),
+        );
+    }
+
+    // Tier 0: per-project Dolt server
+    if let Some(port) = resolve_dolt_port(&beads_dir) {
+        let port_alive = tokio::time::timeout(
+            std::time::Duration::from_millis(500),
+            tokio::net::TcpStream::connect(format!("127.0.0.1:{}", port)),
+        ).await.map(|r| r.is_ok()).unwrap_or(false);
+
+        if port_alive {
+            let db_name = match dolt::database_name_for_project(&project_path) {
+                Some(name) => Some(name),
+                None => dolt::discover_database_on_port(port).await.ok(),
+            };
+            if let Some(db_name) = db_name {
+                match dolt::read_comments_on_port(port, &db_name, issue_id).await {
+                    Ok(comments) => return ok(comments, "dolt-project"),
+                    Err(e) => tracing::warn!("Per-project Dolt comments on port {} failed: {}, falling back", port, e),
+                }
+            }
+        }
+    }
+
+    // Tier 1: central Dolt SQL
+    if dolt_manager.is_available() {
+        if let Some(db_name) = dolt::database_name_for_project(&project_path) {
+            match dolt_manager.read_comments(&db_name, issue_id).await {
+                Ok(comments) => return ok(comments, "dolt-central"),
+                Err(e) => tracing::info!("Dolt SQL comments failed for {} ({}), trying bd CLI", db_name, e),
+            }
+        }
+    }
+
+    // Tier 2: bd CLI
+    match read_comments_from_cli(&project_path, issue_id).await {
+        Ok(comments) => return ok(comments, "cli"),
+        Err(e) => tracing::info!("bd sql comments failed for {} ({}), trying JSONL", path, e),
+    }
+
+    // Tier 3: JSONL file
+    let issues_path = resolve_issues_path(&project_path);
+    if !issues_path.exists() {
+        return (
+            StatusCode::NOT_FOUND,
+            Json(serde_json::json!({ "error": "No data source available: Dolt SQL, bd CLI, and JSONL all failed" })),
+        );
+    }
+    match read_comments_from_jsonl(&issues_path, issue_id) {
+        Ok(comments) => ok(comments, "jsonl"),
+        Err(e) => (
+            StatusCode::INTERNAL_SERVER_ERROR,
+            Json(serde_json::json!({ "error": e })),
+        ),
+    }
 }
 
 /// Request body for creating a new bead.
@@ -1481,6 +1729,7 @@ mod tests {
             closed_at: None,
             close_reason: None,
             comments: None,
+            comment_count: None,
             parent_id: None,
             children: None,
             design: None,
@@ -1969,5 +2218,149 @@ mod tests {
         let result = extract_json_array(output).unwrap();
         let beads: Vec<Bead> = serde_json::from_str(result).unwrap();
         assert_eq!(beads.len(), 0);
+    }
+
+    // ── comment_count / per-bead comments ───────────────────────────────
+
+    /// Writes a JSONL tenant with three beads: two comments on `cc-1`, one
+    /// on `cc-2`, none on `cc-3`.
+    fn write_comment_fixture(dir: &Path) -> PathBuf {
+        let issues = dir.join("issues.jsonl");
+        let lines = [
+            r#"{"id":"cc-1","title":"Two comments","status":"open","comments":[{"id":1,"issue_id":"cc-1","author":"a","text":"SECRET-BODY-ONE","created_at":"2026-01-01T00:00:00Z"},{"id":2,"issue_id":"cc-1","author":"b","text":"SECRET-BODY-TWO","created_at":"2026-01-02T00:00:00Z"}]}"#,
+            r#"{"id":"cc-2","title":"One comment","status":"closed","comments":[{"id":3,"issue_id":"cc-2","author":"c","text":"SECRET-BODY-THREE","created_at":"2026-01-03T00:00:00Z"}]}"#,
+            r#"{"id":"cc-3","title":"No comments","status":"open"}"#,
+        ];
+        std::fs::write(&issues, lines.join("\n")).unwrap();
+        issues
+    }
+
+    fn list_response(beads: Vec<Bead>) -> serde_json::Value {
+        serde_json::to_value(serde_json::json!({ "beads": beads, "source": "jsonl" })).unwrap()
+    }
+
+    #[test]
+    fn test_list_response_carries_comment_count_and_no_bodies_by_default() {
+        let tmp = tempfile::tempdir().unwrap();
+        let issues = write_comment_fixture(tmp.path());
+
+        let beads = finish_beads(read_beads_from_jsonl(&issues).unwrap(), false);
+        let body = list_response(beads);
+        let text = body.to_string();
+
+        let counts: HashMap<String, i64> = body["beads"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|b| {
+                assert!(b.get("comments").is_none(), "no comments key on {}", b["id"]);
+                (b["id"].as_str().unwrap().to_string(), b["comment_count"].as_i64().unwrap())
+            })
+            .collect();
+        assert_eq!(counts["cc-1"], 2);
+        assert_eq!(counts["cc-2"], 1);
+        assert_eq!(counts["cc-3"], 0);
+        assert!(!text.contains("SECRET-BODY"), "comment bodies leaked: {}", text);
+    }
+
+    #[test]
+    fn test_list_response_inlines_comments_when_opted_in() {
+        let tmp = tempfile::tempdir().unwrap();
+        let issues = write_comment_fixture(tmp.path());
+
+        let beads = finish_beads(read_beads_from_jsonl(&issues).unwrap(), true);
+        let body = list_response(beads);
+        let cc1 = body["beads"].as_array().unwrap().iter().find(|b| b["id"] == "cc-1").unwrap();
+        assert_eq!(cc1["comment_count"], 2);
+        assert_eq!(cc1["comments"].as_array().unwrap().len(), 2);
+        assert_eq!(cc1["comments"][0]["text"], "SECRET-BODY-ONE");
+    }
+
+    #[test]
+    fn test_apply_comment_policy_keeps_a_reader_supplied_count() {
+        // A SQL-counted bead arrives with comment_count set and no bodies.
+        let mut beads = vec![bead_with_status("x-1", "open")];
+        beads[0].comment_count = Some(7);
+        apply_comment_policy(&mut beads, false);
+        assert_eq!(beads[0].comment_count, Some(7));
+        assert!(beads[0].comments.is_none());
+    }
+
+    #[test]
+    fn test_bd_list_comment_count_field_deserializes() {
+        let bead: Bead = serde_json::from_str(
+            r#"{"id":"b-1","title":"t","status":"open","comment_count":4}"#,
+        )
+        .unwrap();
+        assert_eq!(bead.comment_count, Some(4));
+    }
+
+    #[test]
+    fn test_parse_comment_counts_from_bd_sql_output() {
+        let output = "Warning: something\n[{\"issue_id\":\"a-1\",\"n\":9},{\"issue_id\":\"a-2\",\"n\":3}]";
+        let counts = parse_comment_counts(output).unwrap();
+        assert_eq!(counts.len(), 2);
+        assert_eq!(counts["a-1"], 9);
+        assert_eq!(counts["a-2"], 3);
+    }
+
+    #[test]
+    fn test_comment_counts_sql_never_selects_bodies() {
+        assert!(COMMENT_COUNTS_SQL.contains("COUNT(*)"));
+        assert!(COMMENT_COUNTS_SQL.contains("GROUP BY issue_id"));
+        assert!(!COMMENT_COUNTS_SQL.contains("text"));
+        assert!(!COMMENT_COUNTS_SQL.contains("SELECT *"));
+    }
+
+    #[test]
+    fn test_read_comments_from_jsonl_returns_one_beads_comments() {
+        let tmp = tempfile::tempdir().unwrap();
+        let issues = write_comment_fixture(tmp.path());
+
+        let cc1 = read_comments_from_jsonl(&issues, "cc-1").unwrap();
+        assert_eq!(cc1.len(), 2);
+        assert!(cc1.iter().all(|c| c.issue_id == "cc-1"));
+        assert_eq!(cc1[1].text, "SECRET-BODY-TWO");
+
+        assert!(read_comments_from_jsonl(&issues, "cc-3").unwrap().is_empty());
+        assert!(read_comments_from_jsonl(&issues, "missing").unwrap().is_empty());
+    }
+
+    #[test]
+    fn test_is_valid_bead_id() {
+        assert!(is_valid_bead_id("livespec-dev-tooling-o6mqy5"));
+        assert!(is_valid_bead_id("livespec-dev-tooling-yilyxr.8"));
+        assert!(is_valid_bead_id("beads_web-1"));
+        assert!(!is_valid_bead_id(""));
+        assert!(!is_valid_bead_id("x' OR '1'='1"));
+        assert!(!is_valid_bead_id("x; DROP TABLE comments"));
+        assert!(!is_valid_bead_id(&"a".repeat(129)));
+    }
+
+    async fn call_comments_endpoint(path: &str, id: &str) -> (StatusCode, serde_json::Value) {
+        let res = read_bead_comments(
+            Extension(Arc::new(DoltManager::new())),
+            Query(BeadCommentsParams { path: path.to_string(), id: id.to_string() }),
+        )
+        .await
+        .into_response();
+        let status = res.status();
+        let bytes = axum::body::to_bytes(res.into_body(), usize::MAX).await.unwrap();
+        (status, serde_json::from_slice(&bytes).unwrap())
+    }
+
+    #[tokio::test]
+    async fn test_comments_endpoint_rejects_an_unsafe_bead_id() {
+        let (status, body) = call_comments_endpoint("/tmp", "x' OR '1'='1").await;
+        assert_eq!(status, StatusCode::BAD_REQUEST);
+        assert_eq!(body["error"], "Invalid bead id");
+    }
+
+    #[tokio::test]
+    async fn test_comments_endpoint_applies_path_security() {
+        // Outside $HOME, exactly as /api/beads refuses it.
+        let (status, body) = call_comments_endpoint("/etc", "cc-1").await;
+        assert_eq!(status, StatusCode::FORBIDDEN);
+        assert!(body["error"].as_str().unwrap().contains("denied") || body["error"].as_str().unwrap().contains("Invalid"));
     }
 }

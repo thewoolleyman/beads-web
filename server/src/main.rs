@@ -169,6 +169,7 @@ async fn main() {
         .route("/api/lanes", get(routes::lanes::get_lanes))
         .nest("/api", routes::project_routes().with_state(database.clone()))
         .route("/api/beads", get(routes::beads::read_beads))
+        .route("/api/beads/comments", get(routes::beads::read_bead_comments))
         .route("/api/beads/create", post(routes::beads::create_bead_handler))
         .route("/api/beads/update", patch(routes::beads::update_bead_handler))
         // Dolt endpoints
@@ -210,7 +211,11 @@ async fn main() {
         .layer(Extension(lanes))
         .layer(Extension(database))
         .layer(Extension(dolt_manager))
-        .layer(cors);
+        .layer(cors)
+        // gzip/br for clients that ask. The default predicate already skips
+        // `text/event-stream`, so the /api/watch/beads SSE stream is never
+        // buffered by an encoder.
+        .layer(routes::compression_layer());
 
     let addr = format!("{}:{}", host, port);
     let listener = tokio::net::TcpListener::bind(&addr)

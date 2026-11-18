@@ -23,7 +23,10 @@ export const BeadSchema = z.object({
   owner: z.string().nullish(),
   created_at: z.string().nullish(),
   updated_at: z.string().nullish(),
+  // Omitted from /api/beads unless `include_comments=true`; the board uses
+  // comment_count and the detail panel reads /api/beads/comments.
   comments: z.array(CommentSchema).nullish(),
+  comment_count: z.number().nullish(),
   parent_id: z.string().nullish(),
   children: z.array(z.string()).nullish(),
   design: z.string().nullish(),
@@ -39,6 +42,11 @@ export const BeadSchema = z.object({
 
 export const BeadsResponseSchema = z.object({
   beads: z.array(BeadSchema),
+  source: z.string().optional(),
+});
+
+export const BeadCommentsResponseSchema = z.object({
+  comments: z.array(CommentSchema),
   source: z.string().optional(),
 });
 
